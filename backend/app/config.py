@@ -51,6 +51,7 @@ def get_settings() -> Settings:
 # --- Processing pipeline (caption → translate → TTS dub) ---
 # Module-level constants consumed by the dub pipeline services.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
 AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "eastus")

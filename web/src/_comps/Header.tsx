@@ -13,10 +13,11 @@ export default function Header({ onSignIn }: { onSignIn: () => void }) {
         variant="outline"
         size="sm"
         onClick={onSignIn}
-        className="flex items-center gap-2 text-sm font-medium">
+        className="flex items-center gap-2 text-sm font-medium"
+      >
         <LogIn className="w-4 h-4" />
         <span className="hidden sm:inline">Нэвтрэх</span>
-        <span className="sm:hidden">Sign In</span>
+        <span className="sm:hidden">Нэвтрэх</span>
       </Button>
 
       <Button
@@ -24,7 +25,8 @@ export default function Header({ onSignIn }: { onSignIn: () => void }) {
         size="icon"
         onClick={toggleTheme}
         className="rounded-full"
-        aria-label="Toggle theme">
+        aria-label="Toggle theme"
+      >
         {theme === "dark" ? (
           <Sun className="w-5 h-5 text-yellow-400" />
         ) : (

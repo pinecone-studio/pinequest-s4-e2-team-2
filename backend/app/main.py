@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings, AUDIO_DIR
 from app.routers import auth, summary, video, voice, pipeline, translate
+from app.routers.tts import router as tts_router
 
 
 settings = get_settings()
@@ -33,6 +34,9 @@ app.include_router(voice.router)
 # Dub pipeline + translation engine
 app.include_router(pipeline.router)
 app.include_router(translate.router)
+
+# TTS synthesis endpoint
+app.include_router(tts_router)
 
 
 @app.get("/", tags=["system"])

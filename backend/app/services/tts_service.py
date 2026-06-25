@@ -15,13 +15,14 @@ _AZURE_VOICES = {
 
 
 def synthesize(text: str, options: dict = None) -> bytes:
-    """Return MP3 audio bytes for the given Mongolian text."""
+    """Return MP3 audio bytes for the given Mongolian text. Azure first, Chimege fallback."""
     opts = options or {}
-    if PROVIDER == "azure":
-        return _azure_synthesize(text, opts)
     if PROVIDER == "chimege":
         return _chimege_synthesize(text, opts)
-    raise ValueError(f"Unknown TTS provider: {PROVIDER}")
+    try:
+        return _azure_synthesize(text, opts)
+    except Exception:
+        return _chimege_synthesize(text, opts)
 
 
 def _azure_synthesize(text: str, options: dict) -> bytes:

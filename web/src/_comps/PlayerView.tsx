@@ -4,23 +4,24 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, RotateCcw, ChevronLeft, Languages } from "lucide-react";
 import { Button } from "@/_comps/ui/Button";
 import { useTranscriptLogger } from "@/_comps/youtube-transcript/useTranscriptLogger";
+import { processVideo, type Segment } from "@/lib/backend-api";
 
-function generateSegments() {
-  return [
-    { start: 0,  end: 5,  original: "Welcome to this video.",                             mongolian: "Энэ видеонд тавтай морил." },
-    { start: 5,  end: 11, original: "Today we're going to explore something amazing.",    mongolian: "Өнөөдөр бид гайхалтай зүйлийг судлах болно." },
-    { start: 11, end: 17, original: "This technology is changing the world.",              mongolian: "Энэ технологи дэлхийг өөрчилж байна." },
-    { start: 17, end: 23, original: "Let's take a closer look at how it works.",           mongolian: "Хэрхэн ажилладгийг нь нарийвчлан харцгаая." },
-    { start: 23, end: 30, original: "First, we need to understand the basics.",            mongolian: "Юуны өмнө үндсийг нь ойлгох хэрэгтэй." },
-    { start: 30, end: 38, original: "The concept was first introduced in 2015.",           mongolian: "Энэ ойлголтыг 2015 онд анх танилцуулсан." },
-    { start: 38, end: 45, original: "Since then, it has grown exponentially.",             mongolian: "Тэр цагаас хойш маш хурдацтай өссөн." },
-    { start: 45, end: 52, original: "Millions of people use it every single day.",         mongolian: "Өдөр бүр сая сая хүмүүс үүнийг ашигладаг." },
-    { start: 52, end: 60, original: "The impact on society has been profound.",            mongolian: "Нийгэмд үзүүлсэн нөлөө нь маш гүн гүнзгий байсан." },
-    { start: 60, end: 67, original: "Researchers are still uncovering new possibilities.", mongolian: "Судлаачид шинэ боломжуудыг нээсээр байна." },
-    { start: 67, end: 74, original: "In the next section, we'll dive deeper.",             mongolian: "Дараагийн хэсэгт бид илүү гүнзгий судлах болно." },
-    { start: 74, end: 82, original: "Stay tuned for more exciting content.",               mongolian: "Цаашдын сонирхолтой контентыг дагаж байгаарай." },
-    { start: 82, end: 90, original: "Thanks for watching! Don't forget to subscribe.",     mongolian: "Үзэж байгаад баярлалаа! Бүртгэлийг мартуузай." },
-  ];
+type DisplaySegment = {
+  start: number;
+  end: number;
+  original: string;
+  mongolian: string;
+  audio_path: string | null;
+};
+
+function toDisplaySegments(raw: Segment[]): DisplaySegment[] {
+  return raw.map((s) => ({
+    start: s.start,
+    end: s.start + s.duration,
+    original: s.text,
+    mongolian: s.translated_text ?? s.text,
+    audio_path: s.audio_path,
+  }));
 }
 
 export default function PlayerView({
@@ -31,14 +32,27 @@ export default function PlayerView({
   onBack: () => void;
 }) {
   const videoId = videoUrl.match(/(?:v=|youtu\.be\/)([^&\s]+)/)?.[1] ?? "";
-  const segments = generateSegments();
-  const duration = segments[segments.length - 1]?.end ?? 90;
+
+  const [segments, setSegments] = useState<DisplaySegment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const duration = segments[segments.length - 1]?.end ?? 0;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeSegmentIdx, setActiveSegmentIdx] = useState(0);
   const [showOriginal, setShowOriginal] = useState(false);
+
+  useEffect(() => {
+    if (!videoId) return;
+    setIsLoading(true);
+    setError(null);
+    processVideo(videoId)
+      .then((result) => setSegments(toDisplaySegments(result.segments)))
+      .catch((err) => setError(err.message ?? "Алдаа гарлаа"))
+      .finally(() => setIsLoading(false));
+  }, [videoId]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef<HTMLDivElement | null>(null);
@@ -88,6 +102,26 @@ export default function PlayerView({
   };
 
   const progressPct = (currentTime / duration) * 100;
+
+  if (isLoading) {
+    return (
+      <div className="w-full max-w-5xl mx-auto px-4 flex flex-col items-center justify-center min-h-64 gap-3">
+        <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <p className="text-sm text-muted-foreground">Видео боловсруулж байна...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="w-full max-w-5xl mx-auto px-4 flex flex-col items-center justify-center min-h-64 gap-3">
+        <p className="text-sm text-destructive">{error}</p>
+        <button onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground">
+          Буцах
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4">

@@ -8,6 +8,7 @@ import { Label } from "@/_comps/ui/Label";
 import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/_comps/AuthLayout";
 import GoogleIcon from "@/_comps/GoogleIcon";
+import { signInWithGoogleAndSync } from "@/lib/google-auth";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -24,6 +25,19 @@ export default function LoginPage() {
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid email or password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithGoogleAndSync();
+      window.location.href = "/";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
     } finally {
       setLoading(false);
     }
@@ -46,9 +60,14 @@ export default function LoginPage() {
       <Button
         variant="outline"
         className="w-full h-12 text-sm font-medium mb-6"
-        onClick={() => {}}
+        onClick={handleGoogleSignIn}
+        disabled={loading}
       >
-        <GoogleIcon className="w-5 h-5 mr-2" />
+        {loading ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : (
+          <GoogleIcon className="w-5 h-5 mr-2" />
+        )}
         Continue with Google
       </Button>
 

@@ -5,6 +5,8 @@ import { X, Mail, Lock, Eye, EyeOff, Tv2 } from "lucide-react";
 import { Button } from "@/_comps/ui/Button";
 import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
+import GoogleIcon from "@/_comps/GoogleIcon";
+import { signInWithGoogleAndSync } from "@/lib/google-auth";
 
 export default function SignInModal({ onClose }: { onClose: () => void }) {
   const [showPassword, setShowPassword] = useState(false);
@@ -12,6 +14,7 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [error, setError] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,6 +23,19 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
       setIsLoading(false);
       onClose();
     }, 1200);
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError("");
+    setIsLoading(true);
+    try {
+      await signInWithGoogleAndSync();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -51,6 +67,23 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
             ? "Тавтай морил! Та бүртгэлтэй хэрэглэгч бол нэвтэрнэ үү."
             : "Шинэ бүртгэл үүсгэж MonCast-д нэгдээрэй."}
         </p>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full mb-5"
+          onClick={handleGoogleSignIn}
+          disabled={isLoading}
+        >
+          <GoogleIcon className="w-5 h-5 mr-2" />
+          Continue with Google
+        </Button>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">

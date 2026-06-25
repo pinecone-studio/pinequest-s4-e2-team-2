@@ -17,7 +17,7 @@
 ```
 Frontend (Next.js)  →  Vercel
 Backend (FastAPI)   →  Railway
-Database            →  PostgreSQL
+Database            →  Firebase Auth + Firestore + Storage
 ```
 
 Frontend болон Backend нь REST API-аар харилцана.
@@ -34,7 +34,7 @@ Frontend болон Backend нь REST API-аар харилцана.
 | Орчуулга | Gemini API |
 | TTS | Coqui TTS |
 | Speaker detection | pyannote/speaker-diarization |
-| Database | PostgreSQL |
+| Database | Firebase Auth + Firestore + Storage |
 | Deploy | Railway |
 
 ---
@@ -55,12 +55,12 @@ backend/
 │   │   ├── whisper_service.py   # yt-dlp + Whisper fallback (PATH B)
 │   │   ├── translator.py        # Gemini API орчуулга
 │   │   ├── tts_service.py       # Coqui TTS + pyannote дуб
-│   │   ├── cache_service.py     # PostgreSQL cache
+│   │   ├── cache_service.py     # Firestore repository/cache
 │   │   └── summary_service.py   # Gemini API summary
 │   ├── models/
 │   │   ├── segment.py       # Segment dataclass
 │   │   ├── job.py           # Job state
-│   │   └── schema.prisma    # DB schema
+│   │   └── schema.prisma    # Legacy note; runtime uses Firestore docs
 │   └── utils/
 │       ├── audio.py         # pad / stretch / merge
 │       └── lang.py          # language code normalization
@@ -77,7 +77,7 @@ backend/
 ```
 POST /process { video_id }
         ↓
-Cache шалгах (PostgreSQL)
+Cache шалгах (Firestore)
         ↓ cache miss
 Caption cascade
   PATH A: youtube_transcript_api → caption татна (хурдан)
@@ -183,7 +183,7 @@ HF_TOKEN=                # pyannote (HuggingFace)
 5. `backend/app/services/whisper_service.py` — PATH B
 6. `backend/app/services/translator.py` — Gemini API
 7. `backend/app/services/tts_service.py` — Coqui + pyannote
-8. `backend/app/services/cache_service.py` — PostgreSQL
+8. `backend/app/services/cache_service.py` — Firestore
 9. `backend/app/routers/video.py` — pipeline нэгтгэх
 10. `backend/app/routers/summary.py`
 11. `Dockerfile` — Railway deploy

@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Heavy local AI dependencies.
+# On Windows, TTS may require Microsoft C++ Build Tools.
+faster-whisper
+pyannote.audio
+TTS

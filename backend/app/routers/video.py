@@ -1,56 +1,133 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.services.caption_fetcher import fetch_captions
-from app.services.whisper_service import transcribe
-from app.services.translator import to_mongolian
-from app.services.tts_service import synthesize
-from app.services.cache_service import get_cached_video, cache_video
-from app.utils.audio import save_audio, audio_url_path, audio_duration_ms
-from app.utils.video import extract_video_id
+from app.models.entities import (
+    NoteCreate,
+    NoteRecord,
+    NoteUpdate,
+    ProcessVideoRequest,
+    UserProfile,
+    VideoAssetCreate,
+    VideoAssetRecord,
+    VideoRecord,
+    VideoUpsert,
+    WatchHistoryRecord,
+    WatchHistoryUpdate,
+)
+from app.models.job import ProcessingJob
+from app.services import cache_service
+from app.services.auth_service import get_current_user
 
-router = APIRouter()
+
+router = APIRouter(prefix="/videos", tags=["videos"])
 
 
-class ProcessRequest(BaseModel):
-    video_id: str
+@router.post("", response_model=VideoRecord)
+def upsert_video(
+    payload: VideoUpsert,
+    current_user: UserProfile = Depends(get_current_user),
+) -> VideoRecord:
+    return cache_service.upsert_video(payload)
 
 
-@router.post("/process")
-async def process_video(request: ProcessRequest):
-    video_id = extract_video_id(request.video_id)
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
+@router.post("/process", response_model=ProcessingJob, status_code=status.HTTP_202_ACCEPTED)
+def create_processing_job(
+    payload: ProcessVideoRequest,
+    current_user: UserProfile = Depends(get_current_user),
+) -> ProcessingJob:
+    video = cache_service.upsert_video(payload.video)
+    job = ProcessingJob(user_id=current_user.id, video_id=video.id)
+    return cache_service.create_processing_job(job)
 
-    cached = get_cached_video(video_id)
-    if cached:
-        return cached
 
-    # PATH A: YouTube captions
-    caption_result = fetch_captions(video_id)
+@router.get("/jobs/{job_id}", response_model=ProcessingJob)
+def read_processing_job(
+    job_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> ProcessingJob:
+    job = cache_service.get_processing_job(job_id)
+    if not job or job.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return job
 
-    if caption_result:
-        source_lang, segments = caption_result
-    else:
-        # PATH B: yt-dlp + Whisper fallback
-        # EXTENSION POINT: Whisper transcription for videos without captions
-        raise HTTPException(status_code=422, detail={
-            "code": "NO_CAPTIONS",
-            "message": "This video has no captions. Whisper fallback is not yet implemented.",
-        })
 
-    # Translate to Mongolian
-    segments = to_mongolian(segments, source_lang)
+@router.post("/history", response_model=WatchHistoryRecord)
+def update_watch_history(
+    payload: WatchHistoryUpdate,
+    current_user: UserProfile = Depends(get_current_user),
+) -> WatchHistoryRecord:
+    return cache_service.record_watch_history(current_user.id, payload)
 
-    # TTS for each segment
-    result_segments = []
-    for i, seg in enumerate(segments):
-        audio_bytes = synthesize(seg.translated_text or seg.text)
-        path = save_audio(audio_bytes, video_id, i)
-        audio_ms = audio_duration_ms(path)
-        seg = seg.model_copy(update={"audio_path": audio_url_path(video_id, i), "audio_ms": audio_ms})
-        result_segments.append(seg.model_dump())
 
-    result = {"video_id": video_id, "segments": result_segments}
-    cache_video(video_id, result)
-    return result
+@router.get("/history", response_model=list[WatchHistoryRecord])
+def list_watch_history(
+    limit: int = Query(default=30, ge=1, le=100),
+    current_user: UserProfile = Depends(get_current_user),
+) -> list[WatchHistoryRecord]:
+    return cache_service.list_watch_history(current_user.id, limit=limit)
+
+
+@router.post("/{video_id}/notes", response_model=NoteRecord, status_code=status.HTTP_201_CREATED)
+def create_note(
+    video_id: str,
+    payload: NoteCreate,
+    current_user: UserProfile = Depends(get_current_user),
+) -> NoteRecord:
+    if payload.video_id != video_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Path video_id must match request body video_id.",
+        )
+    return cache_service.create_note(current_user.id, payload)
+
+
+@router.get("/{video_id}/notes", response_model=list[NoteRecord])
+def list_notes(
+    video_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> list[NoteRecord]:
+    return cache_service.list_notes(current_user.id, video_id)
+
+
+@router.post("/{video_id}/assets", response_model=VideoAssetRecord, status_code=status.HTTP_201_CREATED)
+def save_video_asset(
+    video_id: str,
+    payload: VideoAssetCreate,
+    current_user: UserProfile = Depends(get_current_user),
+) -> VideoAssetRecord:
+    if payload.video_id != video_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Path video_id must match request body video_id.",
+        )
+    return cache_service.save_video_asset(payload)
+
+
+@router.get("/{video_id}/assets", response_model=list[VideoAssetRecord])
+def list_video_assets(
+    video_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> list[VideoAssetRecord]:
+    return cache_service.list_video_assets(video_id)
+
+
+@router.patch("/notes/{note_id}", response_model=NoteRecord)
+def update_note(
+    note_id: str,
+    payload: NoteUpdate,
+    current_user: UserProfile = Depends(get_current_user),
+) -> NoteRecord:
+    try:
+        return cache_service.update_note(current_user.id, note_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.") from exc
+
+
+@router.delete("/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_note(
+    note_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> None:
+    try:
+        cache_service.delete_note(current_user.id, note_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.") from exc

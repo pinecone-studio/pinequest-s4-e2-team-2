@@ -3,6 +3,9 @@ uvicorn[standard]
 python-dotenv
 pydantic
 
+# Auth / Database (Firebase Auth + Firestore)
+firebase-admin
+
 # Caption / STT
 youtube-transcript-api
 yt-dlp
@@ -16,11 +19,11 @@ mutagen
 # Audio
 pydub
 
-# Database
+# Database (legacy cache fallback)
 sqlalchemy
 psycopg2-binary
 
-# Auth
+# Auth (email/password extension point)
 python-jose[cryptography]
 passlib[bcrypt]
 

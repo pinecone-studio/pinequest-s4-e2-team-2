@@ -1,10 +1,26 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/auth")
+from app.models.entities import UserProfile
+from app.services.auth_service import get_current_user
 
-# EXTENSION POINT: full auth with PostgreSQL users table
 
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+# --- Firebase / Google login (schema branch) ---
+
+@router.get("/me", response_model=UserProfile)
+def read_current_user(current_user: UserProfile = Depends(get_current_user)) -> UserProfile:
+    return current_user
+
+
+@router.post("/sync", response_model=UserProfile)
+def sync_current_user(current_user: UserProfile = Depends(get_current_user)) -> UserProfile:
+    return current_user
+
+
+# --- Email/password auth (EXTENSION POINT, not yet implemented) ---
 
 class RegisterRequest(BaseModel):
     email: str

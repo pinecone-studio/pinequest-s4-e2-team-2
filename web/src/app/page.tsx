@@ -4,12 +4,11 @@ import { useState } from "react";
 import { ThemeProvider } from "@/_comps/providers/ThemeProvider";
 import Header from "@/_comps/Header";
 import SearchBox from "@/_comps/SearchBox";
-import ProcessingView from "@/_comps/ProcessingView";
 import PlayerView from "@/_comps/PlayerView";
 import SignInModal from "@/_comps/SignInModal";
 import AnimatedBackground from "@/_comps/AnimatedBackground";
 
-type AppState = "search" | "processing" | "player";
+type AppState = "search" | "player";
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>("search");
@@ -18,10 +17,6 @@ export default function Home() {
 
   const handleSearch = (url: string) => {
     setVideoUrl(url);
-    setAppState("processing");
-  };
-
-  const handleProcessingComplete = () => {
     setAppState("player");
   };
 
@@ -42,18 +37,6 @@ export default function Home() {
               <div className="relative w-full flex flex-col items-center">
                 <SearchBox onSubmit={handleSearch} />
               </div>
-            </div>
-          )}
-
-          {appState === "processing" && (
-            <div className="w-full flex flex-col items-center">
-              <div className="mb-8 text-center">
-                <h2 className="text-xl font-bold text-foreground">Видео боловсруулж байна</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Энэ үйлдэл хэдэн минут шаардагдана. Та хүлээнэ үү...
-                </p>
-              </div>
-              <ProcessingView videoUrl={videoUrl} onComplete={handleProcessingComplete} />
             </div>
           )}
 

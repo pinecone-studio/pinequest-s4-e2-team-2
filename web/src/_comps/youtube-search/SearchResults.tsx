@@ -39,8 +39,8 @@ export default function SearchResults({
       </div>
 
       <div className="grid gap-2">
-        {results.map((item) => (
-          <ResultRow key={resultKey(item)} item={item} onSelect={onSelect} />
+        {results.map((item, index) => (
+          <ResultRow key={`${resultKey(item)}-${index}`} item={item} onSelect={onSelect} />
         ))}
       </div>
     </div>

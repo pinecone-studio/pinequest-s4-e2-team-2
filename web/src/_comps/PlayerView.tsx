@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, RotateCcw, ChevronLeft, Languages } from "lucide-react";
 import { Button } from "@/_comps/ui/Button";
+import { useTranscriptLogger } from "@/_comps/youtube-transcript/useTranscriptLogger";
 
 function generateSegments() {
   return [
@@ -41,6 +42,8 @@ export default function PlayerView({
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef<HTMLDivElement | null>(null);
+
+  useTranscriptLogger(videoId);
 
   useEffect(() => {
     if (isPlaying) {
@@ -101,7 +104,7 @@ export default function PlayerView({
           <div className="relative w-full rounded-2xl overflow-hidden bg-black aspect-video shadow-2xl">
             {videoId ? (
               <iframe
-                src={`https://www.youtube.com/embed/${videoId}?autoplay=0&controls=0&modestbranding=1`}
+                src={`https://www.youtube.com/embed/${videoId}?autoplay=0&controls=1&modestbranding=1`}
                 title="YouTube video"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
@@ -112,22 +115,6 @@ export default function PlayerView({
                 <p className="text-white/50 text-sm">Видео ачааллаж байна...</p>
               </div>
             )}
-            <div
-              className="absolute inset-0 flex items-center justify-center cursor-pointer group"
-              onClick={() => setIsPlaying((p) => !p)}
-            >
-              <div
-                className={`w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-200 ${
-                  isPlaying ? "opacity-0 group-hover:opacity-100" : "opacity-100"
-                }`}
-              >
-                {isPlaying ? (
-                  <Pause className="w-7 h-7 text-white" />
-                ) : (
-                  <Play className="w-7 h-7 text-white ml-1" />
-                )}
-              </div>
-            </div>
           </div>
 
           <div className="rounded-xl bg-card border border-border p-3 space-y-2">
@@ -174,6 +161,7 @@ export default function PlayerView({
             <Languages className="w-3.5 h-3.5" />
             {showOriginal ? "Монгол харах" : "Эх хэлийг харах"}
           </Button>
+
         </div>
 
         <div className="lg:col-span-2 flex flex-col">

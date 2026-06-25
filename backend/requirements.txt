@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+youtube-transcript-api
+yt-dlp
+faster-whisper
+google-generativeai
+TTS
+pyannote.audio
+psycopg2-binary

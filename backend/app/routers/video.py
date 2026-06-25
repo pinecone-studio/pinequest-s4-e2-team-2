@@ -1,0 +1,1 @@
+# POST /process — үндсэн pipeline

@@ -1,0 +1,1 @@
+# Coqui TTS + pyannote дуб

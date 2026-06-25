@@ -1,0 +1,46 @@
+# IDE
+.continue/
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Env files
+.env*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# SSL / Keys
+*.pem
+*.key
+*.cert
+
+# Generated audio / subtitle files
+*.mp3
+*.wav
+*.vtt
+audio/
+uploads/

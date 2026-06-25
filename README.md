@@ -24,7 +24,7 @@ YouTube URL оруулахад:
 |-------|-----------|
 | Frontend | Next.js → Vercel |
 | Backend | FastAPI (Python) → Railway |
-| Database | PostgreSQL |
+| Database | Firebase Auth + Firestore |
 | Орчуулга | Gemini API |
 | TTS | Azure / Chimege |
 | STT | youtube-transcript-api / faster-whisper |
@@ -40,7 +40,7 @@ Frontend (Next.js)
     ↓  REST API
 Backend (FastAPI)
     ↓
-PostgreSQL (cache)
+Firebase / Firestore (cache + auth)
 ```
 
 ---
@@ -69,7 +69,6 @@ Azure/Chimege TTS → Монгол дуб
 
 - Node.js 24+
 - Python 3.11+
-- PostgreSQL
 
 ### Frontend
 
@@ -79,22 +78,33 @@ npm install
 npm run dev
 ```
 
+`http://localhost:3000` дээр нээгдэнэ.
+
 ### Backend
 
 ```bash
-cd server
+cd backend
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env   # API key-үүдийг бөглөнө
 uvicorn app.main:app --reload
 ```
 
-### Env variables
+`http://localhost:8000` дээр ажиллана. API docs: `http://localhost:8000/docs`
+
+### Шаардлагатай env variables
+
+`backend/.env` файлд дараах key-үүдийг бөглөнө:
 
 ```
-GEMINI_API_KEY=
-DATABASE_URL=
-AZURE_TTS_KEY=
-HF_TOKEN=
+GEMINI_API_KEY=          # Google AI Studio
+AZURE_SPEECH_KEY=        # Azure Cognitive Services
+AZURE_SPEECH_REGION=     # жишээ: southeastasia
+FIREBASE_PROJECT_ID=     # Firebase Console
+FIREBASE_CREDENTIALS_PATH=   # service account JSON зам (локал)
+# эсвэл
+FIREBASE_CREDENTIALS_JSON=   # service account JSON агуулга (Railway)
 ```
 
 ---
@@ -104,7 +114,7 @@ HF_TOKEN=
 ```
 sightahead/
 ├── web/        # Next.js frontend
-├── server/     # FastAPI backend
+├── backend/    # FastAPI backend
 └── README.md
 ```
 

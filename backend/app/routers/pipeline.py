@@ -46,11 +46,8 @@ async def process_video(request: ProcessRequest):
         source_lang, segments = caption_result
     else:
         # PATH B: yt-dlp + Whisper fallback
-        # EXTENSION POINT: Whisper transcription for videos without captions
-        raise HTTPException(status_code=422, detail={
-            "code": "NO_CAPTIONS",
-            "message": "This video has no captions. Whisper fallback is not yet implemented.",
-        })
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        source_lang, segments = transcribe(youtube_url)
 
     # Translate to Mongolian
     segments = to_mongolian(segments, source_lang)

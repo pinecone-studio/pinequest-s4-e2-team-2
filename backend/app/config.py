@@ -22,6 +22,7 @@ class Settings:
     app_name: str
     environment: str
     cors_origins: list[str]
+    cors_origin_regex: str | None
     firebase_project_id: str | None
     firebase_credentials_json: str | None
     firebase_credentials_json_base64: str | None
@@ -39,6 +40,12 @@ def get_settings() -> Settings:
         cors_origins=_csv(
             os.getenv("CORS_ORIGINS"),
             ["http://localhost:3000", "http://127.0.0.1:3000"],
+        ),
+        # Matches any Vercel deploy URL (per-deploy hashes + the stable alias).
+        # Override via CORS_ORIGIN_REGEX if the frontend moves off Vercel.
+        cors_origin_regex=os.getenv(
+            "CORS_ORIGIN_REGEX",
+            r"https://([a-zA-Z0-9-]+\.)*vercel\.app",
         ),
         firebase_project_id=os.getenv("FIREBASE_PROJECT_ID"),
         firebase_credentials_json=os.getenv("FIREBASE_CREDENTIALS_JSON"),

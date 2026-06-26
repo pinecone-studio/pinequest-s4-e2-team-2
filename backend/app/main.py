@@ -13,13 +13,22 @@ settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=settings.cors_origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+# CORS must be active for the browser preflight (OPTIONS) to succeed — without
+# it, OPTIONS falls through to the routes (GET/POST only) and returns 405, and
+# no Access-Control-Allow-Origin header is ever sent.
+#
+# allow_origin_regex matches Vercel's per-deploy URLs (e.g.
+# helex-<hash>-<team>.vercel.app), which a static allowlist can't keep up with.
+# allow_credentials=True is required for the guest session_id cookie; note that
+# this forbids the "*" origin, hence the explicit list + regex.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Static dub audio served from the local audio directory.
 #this needs to be deployed to database ffs, server dont have it, servers just wipe out

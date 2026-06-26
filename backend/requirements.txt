@@ -18,6 +18,7 @@ faster-whisper
 # Translation + Summary
 openai
 google-generativeai
+openai
 httpx
 mutagen
 

@@ -2,17 +2,21 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/_comps/ui/Button";
 import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
-import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
+import { LogIn, Mail, Lock, Loader2, Eye, EyeOff, Sparkles } from "lucide-react";
 import AuthLayout from "@/_comps/AuthLayout";
 import GoogleIcon from "@/_comps/GoogleIcon";
 import { signInWithGoogleAndSync } from "@/lib/google-auth";
+import { loginAsDemo, loginWithEmail } from "@/lib/auth";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -21,8 +25,8 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      // TODO: wire to backend email/password auth once implemented
-      window.location.href = "/";
+      await loginWithEmail(email, password);
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid email or password");
     } finally {
@@ -35,9 +39,22 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithGoogleAndSync();
-      window.location.href = "/";
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Google sign-in failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDemoSignIn = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      await loginAsDemo();
+      router.replace("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Demo sign-in failed");
     } finally {
       setLoading(false);
     }
@@ -50,7 +67,7 @@ export default function LoginPage() {
       subtitle="Log in to your account"
       footer={
         <>
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <Link href="/register" className="text-primary font-medium hover:underline">
             Create one
           </Link>
@@ -115,17 +132,25 @@ export default function LoginPage() {
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
             <Input
               id="password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="pl-10 h-12"
+              className="pl-10 pr-10 h-12"
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Нууц үг нуух" : "Нууц үг харах"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
           </div>
         </div>
-        <Button type="submit" className="w-full h-12 font-medium" disabled={loading}>
+        <Button type="submit" className="w-full h-12 font-medium" disabled={loading || !email || !password}>
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -136,6 +161,16 @@ export default function LoginPage() {
           )}
         </Button>
       </form>
+
+      <button
+        type="button"
+        onClick={handleDemoSignIn}
+        disabled={loading}
+        className="mt-4 w-full h-11 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-foreground/40 hover:bg-muted/40 transition-colors disabled:opacity-50"
+      >
+        <Sparkles className="w-4 h-4" />
+        Демо-р үзэх — бүртгэлгүйгээр туршаад үз
+      </button>
     </AuthLayout>
   );
 }

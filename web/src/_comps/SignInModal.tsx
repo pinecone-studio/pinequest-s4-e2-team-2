@@ -7,6 +7,7 @@ import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
 import GoogleIcon from "@/_comps/GoogleIcon";
 import { signInWithGoogleAndSync } from "@/lib/google-auth";
+import { loginAsDemo, loginWithEmail, registerWithEmail } from "@/lib/auth";
 
 export default function SignInModal({ onClose }: { onClose: () => void }) {
   const [showPassword, setShowPassword] = useState(false);
@@ -16,13 +17,24 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<"signin" | "register">("signin");
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      if (mode === "signin") {
+        await loginWithEmail(email, password);
+      } else {
+        await registerWithEmail(email, password);
+      }
       onClose();
-    }, 1200);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Нэвтрэлт амжилтгүй боллоо",
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -38,10 +50,25 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const handleDemoSignIn = async () => {
+    setError("");
+    setIsLoading(true);
+    try {
+      await loginAsDemo();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Demo sign-in failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-6 duration-200">
         <div className="flex items-center justify-between mb-6">
@@ -49,7 +76,9 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Tv2 className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-heading font-bold text-foreground">MonCast</span>
+            <span className="font-heading font-bold text-foreground">
+              HELEX
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -59,26 +88,6 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <h2 className="text-xl font-bold text-foreground mb-1">
-          {mode === "signin" ? "Нэвтрэх" : "Бүртгүүлэх"}
-        </h2>
-        <p className="text-sm text-muted-foreground mb-6">
-          {mode === "signin"
-            ? "Тавтай морил! Та бүртгэлтэй хэрэглэгч бол нэвтэрнэ үү."
-            : "Шинэ бүртгэл үүсгэж MonCast-д нэгдээрэй."}
-        </p>
-
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full mb-5"
-          onClick={handleGoogleSignIn}
-          disabled={isLoading}
-        >
-          <GoogleIcon className="w-5 h-5 mr-2" />
-          Continue with Google
-        </Button>
-
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             {error}
@@ -87,7 +96,9 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="email" className="text-sm font-medium">Имэйл</Label>
+            <Label htmlFor="email" className="text-sm font-medium">
+              Имэйл
+            </Label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -103,7 +114,9 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="password" className="text-sm font-medium">Нууц үг</Label>
+            <Label htmlFor="password" className="text-sm font-medium">
+              Нууц үг
+            </Label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -120,12 +133,31 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
                 onClick={() => setShowPassword((p) => !p)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
               </button>
             </div>
           </div>
 
-          <Button type="submit" className="w-full font-semibold" disabled={isLoading}>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full mb-5"
+            onClick={handleGoogleSignIn}
+            disabled={isLoading}
+          >
+            <GoogleIcon className="w-5 h-5 mr-2" />
+            Continue with Google
+          </Button>
+
+          <Button
+            type="submit"
+            className="w-full font-semibold"
+            disabled={isLoading}
+          >
             {isLoading ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
@@ -139,9 +171,21 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
           </Button>
         </form>
 
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full mt-3 text-sm text-muted-foreground"
+          onClick={handleDemoSignIn}
+          disabled={isLoading}
+        >
+          Демо-р үзэх
+        </Button>
+
         <div className="mt-4 text-center">
           <p className="text-sm text-muted-foreground">
-            {mode === "signin" ? "Бүртгэл байхгүй юу? " : "Аль хэдийн бүртгэлтэй юу? "}
+            {mode === "signin"
+              ? "Бүртгэл байхгүй юу? "
+              : "Аль хэдийн бүртгэлтэй юу? "}
             <button
               onClick={() => setMode(mode === "signin" ? "register" : "signin")}
               className="text-primary font-medium hover:underline"

@@ -1,29 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ThemeProvider } from "@/_comps/providers/ThemeProvider";
+import { useAuth } from "@/_comps/providers/AuthProvider";
 import Header from "@/_comps/Header";
 import SearchBox from "@/_comps/SearchBox";
-import PlayerView from "@/_comps/PlayerView";
+import DashboardView, { type DashboardVideoSelection } from "@/_comps/dashboard/DashboardView";
 import SignInModal from "@/_comps/SignInModal";
 import AnimatedBackground from "@/_comps/AnimatedBackground";
 
-type AppState = "search" | "player";
-
 export default function Home() {
-  const [appState, setAppState] = useState<AppState>("search");
-  const [videoUrl, setVideoUrl] = useState("");
+  const { user, loading, logout } = useAuth();
+  const [selectedVideo, setSelectedVideo] = useState<DashboardVideoSelection | null>(null);
   const [showSignIn, setShowSignIn] = useState(false);
 
-  const handleSearch = (url: string) => {
-    setVideoUrl(url);
-    setAppState("player");
-  };
+  const handleSearch = useCallback((url: string, video?: DashboardVideoSelection) => {
+    setSelectedVideo({ url, ...video });
+  }, []);
 
-  const handleBack = () => {
-    setAppState("search");
-    setVideoUrl("");
-  };
+  if (loading) {
+    return null;
+  }
+
+  if (user) {
+    return (
+      <ThemeProvider>
+        <DashboardView
+          videoUrl={selectedVideo?.url ?? ""}
+          selectedVideo={selectedVideo}
+          onBack={() => setSelectedVideo(null)}
+          onSearch={handleSearch}
+          onLogout={() => logout()}
+        />
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider>
@@ -31,20 +42,12 @@ export default function Home() {
         <Header onSignIn={() => setShowSignIn(true)} />
 
         <main className="min-h-screen flex flex-col items-center justify-center pt-20 pb-12 px-4">
-          {appState === "search" && (
-            <div className="w-full flex flex-col items-center justify-center">
-              <AnimatedBackground />
-              <div className="relative w-full flex flex-col items-center">
-                <SearchBox onSubmit={handleSearch} />
-              </div>
+          <div className="w-full flex flex-col items-center justify-center">
+            <AnimatedBackground />
+            <div className="relative w-full flex flex-col items-center">
+              <SearchBox onSubmit={() => setShowSignIn(true)} />
             </div>
-          )}
-
-          {appState === "player" && (
-            <div className="w-full flex flex-col items-center">
-              <PlayerView videoUrl={videoUrl} onBack={handleBack} />
-            </div>
-          )}
+          </div>
         </main>
 
         {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}

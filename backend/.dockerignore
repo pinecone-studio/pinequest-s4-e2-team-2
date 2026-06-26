@@ -1,0 +1,12 @@
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+audio/
+cache/
+secrets/
+*adminsdk*.json
+*firebase-admin*.json
+firebase-credentials*.json
+codex-*.log

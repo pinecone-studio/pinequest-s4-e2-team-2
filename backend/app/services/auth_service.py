@@ -62,7 +62,17 @@ def get_current_user(
                 detail=detail,
             ) from exc
 
-        return cache_service.upsert_user_from_token(decoded)
+        try:
+            return cache_service.upsert_user_from_token(decoded)
+        except Exception as exc:
+            settings = get_settings()
+            detail = "User data service is temporarily unavailable."
+            if settings.environment == "local":
+                detail = f"{detail} {type(exc).__name__}: {exc}"
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=detail,
+            ) from exc
 
     # 2. Guest session cookie, issued by POST /auth/guest.
     if guest_session_id and session_service.get_guest_session(guest_session_id):

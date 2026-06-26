@@ -14,11 +14,19 @@ from app.models.entities import (
     WatchHistoryUpdate,
 )
 from app.models.job import ProcessingJob
+from app.config import get_settings
 from app.services import cache_service
 from app.services.auth_service import get_current_user
 
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+
+
+def _service_unavailable(exc: Exception) -> HTTPException:
+    detail = "Data service is temporarily unavailable."
+    if get_settings().environment == "local":
+        detail = f"{detail} {type(exc).__name__}: {exc}"
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
 
 @router.post("", response_model=VideoRecord)
@@ -55,7 +63,10 @@ def update_watch_history(
     payload: WatchHistoryUpdate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> WatchHistoryRecord:
-    return cache_service.record_watch_history(current_user.id, payload)
+    try:
+        return cache_service.record_watch_history(current_user.id, payload)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
 
 
 @router.get("/history", response_model=list[WatchHistoryRecord])
@@ -63,7 +74,10 @@ def list_watch_history(
     limit: int = Query(default=30, ge=1, le=100),
     current_user: UserProfile = Depends(get_current_user),
 ) -> list[WatchHistoryRecord]:
-    return cache_service.list_watch_history(current_user.id, limit=limit)
+    try:
+        return cache_service.list_watch_history(current_user.id, limit=limit)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
 
 
 @router.post("/{video_id}/notes", response_model=NoteRecord, status_code=status.HTTP_201_CREATED)
@@ -77,7 +91,10 @@ def create_note(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Path video_id must match request body video_id.",
         )
-    return cache_service.create_note(current_user.id, payload)
+    try:
+        return cache_service.create_note(current_user.id, payload)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
 
 
 @router.get("/{video_id}/notes", response_model=list[NoteRecord])
@@ -85,7 +102,10 @@ def list_notes(
     video_id: str,
     current_user: UserProfile = Depends(get_current_user),
 ) -> list[NoteRecord]:
-    return cache_service.list_notes(current_user.id, video_id)
+    try:
+        return cache_service.list_notes(current_user.id, video_id)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
 
 
 @router.post("/{video_id}/assets", response_model=VideoAssetRecord, status_code=status.HTTP_201_CREATED)

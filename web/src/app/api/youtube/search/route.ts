@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import yts from "yt-search";
 import type { YouTubeSearchResponse, YouTubeSearchResult } from "@/lib/youtube-search";
 import type { SearchChannel, SearchItem, SearchPlaylist, SearchVideo } from "yt-search";
 
@@ -7,12 +6,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type SearchResultType = "all" | "video" | "channel" | "playlist";
+type YouTubeSearch = typeof import("yt-search").default;
+type RuntimeImport = (id: string) => Promise<{ default?: YouTubeSearch } | YouTubeSearch>;
 
 const TYPE_FILTERS: Partial<Record<SearchResultType, string>> = {
   video: "EgIQAQ%3D%3D",
   channel: "EgIQAg%3D%3D",
   playlist: "EgIQAw%3D%3D",
 };
+
+async function getYouTubeSearch(): Promise<YouTubeSearch> {
+  const runtimeImport = Function("id", "return import(id)") as RuntimeImport;
+  const ytSearchModule = await runtimeImport("yt-search");
+  return typeof ytSearchModule === "function" ? ytSearchModule : ytSearchModule.default!;
+}
 
 function getSearchType(value: string | null): SearchResultType {
   if (value === "video" || value === "channel" || value === "playlist") {
@@ -72,6 +79,10 @@ function getThumbnail(item: SearchChannel | SearchPlaylist | SearchVideo, fallba
   );
 }
 
+function getVideoThumbnail(videoId: string) {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
+
 function toVideoResult(video: SearchVideo, kind: "video" | "live"): YouTubeSearchResult | null {
   const videoId = getVideoId(video);
 
@@ -92,7 +103,7 @@ function toVideoResult(video: SearchVideo, kind: "video" | "live"): YouTubeSearc
     durationLabel: video.timestamp ?? "",
     ago: video.ago ?? "",
     views: typeof video.views === "number" ? video.views : null,
-    thumbnailUrl: getThumbnail(video, videoId),
+    thumbnailUrl: getVideoThumbnail(videoId),
     url: video.url ?? `https://www.youtube.com/watch?v=${videoId}`,
   };
 }
@@ -172,6 +183,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const yts = await getYouTubeSearch();
     const data = await yts({
       query,
       pages,

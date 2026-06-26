@@ -1,3 +1,5 @@
+import logging
+import os
 from typing import Annotated
 
 from fastapi import Header, HTTPException, status
@@ -6,6 +8,27 @@ from app.config import get_settings
 from app.models.entities import UserProfile
 from app.services import cache_service
 from app.services.firebase_service import verify_id_token
+
+logger = logging.getLogger(__name__)
+
+# TODO: Remove auth bypass before production
+_DEMO_USER = UserProfile(
+    id="demo-user",
+    email="demo@sightahead.local",
+    display_name="Demo User",
+)
+
+
+def _firebase_credentials_configured() -> bool:
+    settings = get_settings()
+    if settings.firebase_credentials_json:
+        return True
+    # A configured path still counts as "missing" if the file isn't actually
+    # there (e.g. a teammate's local path left over in a shared .env).
+    return bool(
+        settings.firebase_credentials_path
+        and os.path.isfile(settings.firebase_credentials_path)
+    )
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -28,6 +51,11 @@ def _bearer_token(authorization: str | None) -> str:
 def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
 ) -> UserProfile:
+    # TODO: Remove auth bypass before production
+    if not _firebase_credentials_configured():
+        logger.warning("WARNING: Firebase auth bypassed - no credentials configured")
+        return _DEMO_USER
+
     token = _bearer_token(authorization)
 
     try:

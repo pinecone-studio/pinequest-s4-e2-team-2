@@ -2,22 +2,23 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/_comps/ui/Button";
 import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
 import { UserPlus, Mail, Lock, Loader2 } from "lucide-react";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/_comps/ui/InputOtp";
 import AuthLayout from "@/_comps/AuthLayout";
 import GoogleIcon from "@/_comps/GoogleIcon";
+import { signInWithGoogleAndSync } from "@/lib/google-auth";
+import { registerWithEmail } from "@/lib/auth";
 
 export default function RegisterPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showOtp, setShowOtp] = useState(false);
-  const [otpCode, setOtpCode] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,8 +29,9 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      // await base44.auth.register({ email, password });
-      setShowOtp(true);
+      await registerWithEmail(email, password);
+      // Firebase email/password нь шууд бүртгэдэг тул баталгаажуулалтын алхамгүйгээр нэвтэрнэ.
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -37,71 +39,18 @@ export default function RegisterPage() {
     }
   };
 
-  const handleVerify = async () => {
+  const handleGoogleSignIn = async () => {
     setError("");
     setLoading(true);
     try {
-      // const result = await base44.auth.verifyOtp({ email, otpCode });
-      window.location.href = "/";
+      await signInWithGoogleAndSync();
+      router.replace("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid verification code");
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
     } finally {
       setLoading(false);
     }
   };
-
-  if (showOtp) {
-    return (
-      <AuthLayout
-        icon={Mail}
-        title="Verify your email"
-        subtitle={`We sent a code to ${email}`}
-      >
-        {error && (
-          <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-            {error}
-          </div>
-        )}
-        <div className="flex justify-center mb-6">
-          <InputOTP
-            maxLength={6}
-            value={otpCode}
-            onChange={setOtpCode}
-            autoFocus
-          >
-            <InputOTPGroup>
-              <InputOTPSlot index={0} />
-              <InputOTPSlot index={1} />
-              <InputOTPSlot index={2} />
-              <InputOTPSlot index={3} />
-              <InputOTPSlot index={4} />
-              <InputOTPSlot index={5} />
-            </InputOTPGroup>
-          </InputOTP>
-        </div>
-        <Button
-          className="w-full h-12 font-medium"
-          onClick={handleVerify}
-          disabled={loading || otpCode.length < 6}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Verifying...
-            </>
-          ) : (
-            "Verify"
-          )}
-        </Button>
-        <p className="text-center text-sm text-muted-foreground mt-4">
-          Didn't receive the code?{" "}
-          <button onClick={() => {}} className="text-primary font-medium hover:underline">
-            Resend
-          </button>
-        </p>
-      </AuthLayout>
-    );
-  }
 
   return (
     <AuthLayout
@@ -120,7 +69,8 @@ export default function RegisterPage() {
       <Button
         variant="outline"
         className="w-full h-12 text-sm font-medium mb-6"
-        onClick={() => {}}
+        onClick={handleGoogleSignIn}
+        disabled={loading}
       >
         <GoogleIcon className="w-5 h-5 mr-2" />
         Continue with Google

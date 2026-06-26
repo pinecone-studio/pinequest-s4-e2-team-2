@@ -24,6 +24,7 @@ class Settings:
     cors_origins: list[str]
     firebase_project_id: str | None
     firebase_credentials_json: str | None
+    firebase_credentials_json_base64: str | None
     firebase_credentials_path: str | None
     firebase_storage_bucket: str | None
     gemini_api_key: str | None
@@ -41,6 +42,7 @@ def get_settings() -> Settings:
         ),
         firebase_project_id=os.getenv("FIREBASE_PROJECT_ID"),
         firebase_credentials_json=os.getenv("FIREBASE_CREDENTIALS_JSON"),
+        firebase_credentials_json_base64=os.getenv("FIREBASE_CREDENTIALS_JSON_BASE64"),
         firebase_credentials_path=os.getenv("FIREBASE_CREDENTIALS_PATH"),
         firebase_storage_bucket=os.getenv("FIREBASE_STORAGE_BUCKET"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),

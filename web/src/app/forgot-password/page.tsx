@@ -7,6 +7,7 @@ import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
 import { Mail, ArrowLeft, Loader2 } from "lucide-react";
 import AuthLayout from "@/_comps/AuthLayout";
+import { sendPasswordReset } from "@/lib/auth";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -17,9 +18,10 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      // await base44.auth.resetPasswordRequest(email);
+      await sendPasswordReset(email);
     } catch {
-      // Always show success regardless
+      // Хэрэглэгчийн email бүртгэлтэй эсэхийг задлахгүйн тулд алдааг үл хайхран
+      // үргэлж амжилттай мессеж харуулна.
     } finally {
       setLoading(false);
       setSent(true);
@@ -40,7 +42,7 @@ export default function ForgotPasswordPage() {
     >
       {sent ? (
         <p className="text-sm text-foreground text-center">
-          If an account exists with that email, you'll receive a password reset link shortly.
+          If an account exists with that email, you&apos;ll receive a password reset link shortly.
         </p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">

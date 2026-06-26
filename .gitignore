@@ -54,3 +54,4 @@ __pycache__/
 backend/.venv/
 
 web/.next-dev.*
+web/package-lock.json

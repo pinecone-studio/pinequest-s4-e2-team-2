@@ -48,6 +48,27 @@ copy .env.example .env
 
 Fill the Firebase and AI keys in `.env`.
 
+For local development, prefer one of these Firebase Admin options:
+
+```env
+FIREBASE_CREDENTIALS_PATH=H:\ajil\Coding\sightahead\backend\secrets\firebase-adminsdk.json
+```
+
+For Railway or any hosted environment, do not use a local Windows file path.
+Set the full service account JSON as a secret instead:
+
+```env
+FIREBASE_CREDENTIALS_JSON={...full Firebase service account JSON...}
+FIREBASE_CREDENTIALS_PATH=
+```
+
+If the host has trouble with raw JSON, base64-encode the same JSON and set:
+
+```env
+FIREBASE_CREDENTIALS_JSON_BASE64=...
+FIREBASE_CREDENTIALS_PATH=
+```
+
 ## 5. Run the API
 
 ```powershell

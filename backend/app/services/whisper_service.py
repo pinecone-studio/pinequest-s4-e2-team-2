@@ -8,6 +8,13 @@ def transcribe(url: str, language: str | None = None) -> tuple[str, list[Segment
     PATH B fallback — yt-dlp + faster-whisper.
     Downloads audio then transcribes locally.
     Returns (detected_lang, segments).
+
+    Caller contract: only call this after the youtube_transcript_api caption
+    path (caption_fetcher.fetch_captions) has failed. Downloading audio is
+    what triggers YouTube's bot-detection block on datacenter IPs (e.g.
+    Render) — captions can still resolve from those same IPs, so they must
+    stay the primary path. pipeline.process_video already enforces this
+    ordering; this is the only caller of transcribe().
     """
     audio_path = _download_audio(url)
     try:
@@ -31,6 +38,9 @@ def _download_audio(url: str) -> str:
         }],
         "quiet": True,
     }
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        ydl_opts["cookiefile"] = cookies_file
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     return output_path + ".mp3"

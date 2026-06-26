@@ -31,6 +31,7 @@ class UserProfile(BaseModel):
     email: str | None = None
     display_name: str | None = None
     avatar_url: str | None = None
+    is_guest: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     last_login_at: datetime = Field(default_factory=utc_now)
@@ -57,11 +58,17 @@ class WatchHistoryUpdate(BaseModel):
     last_position_ms: int = Field(default=0, ge=0)
     watched_seconds: int = Field(default=0, ge=0)
     completed: bool = False
+    youtube_url: str | None = None
+    title: str | None = Field(default=None, max_length=300)
+    channel_name: str | None = Field(default=None, max_length=200)
+    thumbnail_url: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
 
 
 class WatchHistoryRecord(WatchHistoryUpdate):
     id: str
     user_id: str
+    notes_count: int = Field(default=0, ge=0)
     last_watched_at: datetime = Field(default_factory=utc_now)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

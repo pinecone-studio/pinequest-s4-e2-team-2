@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 # Static dub audio served from the local audio directory.
+#this needs to be deployed to database ffs, server dont have it, servers just wipe out
 os.makedirs(AUDIO_DIR, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=AUDIO_DIR), name="audio")
 

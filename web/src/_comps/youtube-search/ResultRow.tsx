@@ -68,6 +68,14 @@ function ResultAction({ item }: { item: YouTubeSearchResult }) {
   );
 }
 
+function getThumbnailUrl(item: YouTubeSearchResult) {
+  if (isVideoResult(item)) {
+    return `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
+  }
+
+  return item.thumbnailUrl;
+}
+
 export default function ResultRow({
   item,
   onSelect,
@@ -75,6 +83,8 @@ export default function ResultRow({
   item: YouTubeSearchResult;
   onSelect: (item: YouTubeSearchResult) => void;
 }) {
+  const thumbnailUrl = getThumbnailUrl(item);
+
   return (
     <button
       type="button"
@@ -86,9 +96,9 @@ export default function ResultRow({
           item.kind === "channel" ? "rounded-full w-20 h-20 aspect-square place-self-center" : "rounded-lg"
         }`}
       >
-        {item.thumbnailUrl ? (
+        {thumbnailUrl ? (
           <Image
-            src={item.thumbnailUrl}
+            src={thumbnailUrl}
             alt=""
             fill
             sizes="(max-width: 640px) 112px, 140px"

@@ -17,7 +17,7 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      // await base44.auth.resetPasswordRequest(email);
+      // TODO: wire to backend password reset once email/password auth is implemented
     } catch {
       // Always show success regardless
     } finally {

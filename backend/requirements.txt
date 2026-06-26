@@ -12,6 +12,7 @@ yt-dlp
 faster-whisper
 
 # Translation + Summary
+openai
 google-generativeai
 httpx
 mutagen

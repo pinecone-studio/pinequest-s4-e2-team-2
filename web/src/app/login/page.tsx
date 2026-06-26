@@ -21,7 +21,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      // In real impl: await base44.auth.loginViaEmailPassword(email, password);
+      // TODO: wire to backend email/password auth once implemented
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid email or password");

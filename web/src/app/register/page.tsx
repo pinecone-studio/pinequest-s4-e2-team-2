@@ -28,7 +28,6 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      // await base44.auth.register({ email, password });
       setShowOtp(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -41,7 +40,6 @@ export default function RegisterPage() {
     setError("");
     setLoading(true);
     try {
-      // const result = await base44.auth.verifyOtp({ email, otpCode });
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid verification code");

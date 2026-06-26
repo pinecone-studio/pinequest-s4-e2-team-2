@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, RotateCcw, ChevronLeft, Languages } from "lucide-react";
 import { Button } from "@/_comps/ui/Button";
-import { useTranscriptLogger } from "@/_comps/youtube-transcript/useTranscriptLogger";
 import { processVideo, type Segment } from "@/lib/backend-api";
 
 type DisplaySegment = {
@@ -56,8 +55,6 @@ export default function PlayerView({
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef<HTMLDivElement | null>(null);
-
-  useTranscriptLogger(videoId);
 
   useEffect(() => {
     if (isPlaying) {

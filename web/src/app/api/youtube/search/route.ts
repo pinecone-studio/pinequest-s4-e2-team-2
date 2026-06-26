@@ -210,6 +210,7 @@ export async function GET(request: NextRequest) {
       } satisfies YouTubeSearchResponse,
     );
   } catch (error) {
+    console.log("YouTube search error:", error);
     const message = error instanceof Error ? error.message : "YouTube search failed.";
 
     return Response.json({ error: message }, { status: 502 });

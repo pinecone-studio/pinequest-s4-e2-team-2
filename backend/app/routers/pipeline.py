@@ -40,6 +40,34 @@ def _local_processing_enabled() -> bool:
     return os.getenv("ENABLE_LOCAL_PROCESSING", "").strip().lower() in {"1", "true", "yes"}
 
 
+@router.post("/captions")
+async def get_captions(request: ProcessRequest):
+    """Lightweight captions-only path: youtube_transcript_api segments, no
+    translation/TTS/upload. Fast enough for the free tier, and independent of
+    the ENVIRONMENT processing guard that /process uses."""
+    video_id = extract_video_id(request.video_id)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
+
+    try:
+        caption_result = fetch_captions(video_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Caption service is temporarily unavailable.",
+        ) from exc
+
+    if not caption_result:
+        raise HTTPException(status_code=422, detail="No captions available for this video.")
+
+    source_lang, segments = caption_result
+    return {
+        "video_id": video_id,
+        "source_lang": source_lang,
+        "segments": [seg.model_dump() for seg in segments],
+    }
+
+
 @router.post("/process")
 async def process_video(request: ProcessRequest):
     video_id = extract_video_id(request.video_id)

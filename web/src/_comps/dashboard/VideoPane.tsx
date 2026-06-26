@@ -12,6 +12,8 @@ type VideoPaneProps = {
   title: string
   speaker: string
   sourceLine?: string
+  caption?: string | null
+  captionStatus?: string | null
 }
 
 export function VideoPane(props: VideoPaneProps) {
@@ -30,6 +32,15 @@ export function VideoPane(props: VideoPaneProps) {
         ready={props.ready}
         hasVideo={props.hasVideo}
       />
+      {props.hasVideo && (props.caption || props.captionStatus) && (
+        <div className="dashboard-caption-bar">
+          {props.caption ? (
+            <p className="dashboard-caption-text">{props.caption}</p>
+          ) : (
+            <p className="dashboard-caption-status">{props.captionStatus}</p>
+          )}
+        </div>
+      )}
       <div className="dashboard-saved-header">
         <span>ХАДГАЛСАН АГШИН</span>
         <span />

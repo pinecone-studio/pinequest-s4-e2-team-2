@@ -25,10 +25,12 @@ import {
 } from "@/_comps/youtube-search/utils";
 import {
   createVideoNote,
+  fetchCaptions,
   fetchVideoNotes,
   fetchWatchHistory,
   recordWatchHistory,
   type NoteRecord,
+  type Segment,
   type VideoHistoryPayload,
   type VideoHistoryRecord,
 } from "@/lib/backend-api";
@@ -168,6 +170,9 @@ export default function DashboardView({
   const [recommendedVideos, setRecommendedVideos] = useState<YouTubeVideoSearchResult[]>([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState("");
+  const [captionSegments, setCaptionSegments] = useState<Segment[]>([]);
+  const [captionsLoading, setCaptionsLoading] = useState(false);
+  const [captionsError, setCaptionsError] = useState("");
   const playbackRef = useRef({ time: 0, duration: 0 });
 
   const reloadHistory = useCallback(async () => {
@@ -219,6 +224,38 @@ export default function DashboardView({
     };
   }, [videoId]);
 
+  // Fetch caption segments from the backend whenever a video is selected.
+  useEffect(() => {
+    if (!videoId) {
+      queueMicrotask(() => {
+        setCaptionSegments([]);
+        setCaptionsError("");
+      });
+      return;
+    }
+
+    let active = true;
+    setCaptionsLoading(true);
+    setCaptionsError("");
+
+    fetchCaptions(videoId)
+      .then((result) => {
+        if (active) setCaptionSegments(result.segments);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setCaptionSegments([]);
+        setCaptionsError(error instanceof Error ? error.message : "Captions failed to load.");
+      })
+      .finally(() => {
+        if (active) setCaptionsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [videoId]);
+
   const currentHistoryItem = historyItems.find((item) => item.id === videoId);
   const fallbackItem = videoId ? historyItemFromSelection(videoId, selectedVideo) : null;
   const activeItem = currentHistoryItem ?? fallbackItem;
@@ -230,6 +267,14 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
+  const activeCaption = useMemo(() => {
+    if (captionSegments.length === 0) return null;
+    const seg = captionSegments.find(
+      (s) => player.time >= s.start && player.time < s.start + s.duration,
+    );
+    if (!seg) return null;
+    return seg.translated_text?.trim() || seg.text;
+  }, [captionSegments, player.time]);
   const reply = useMemo(() => buildScholarReply(notes), [notes]);
   const recommendationSearchQuery = useMemo(() => recommendationQuery(activeItem), [activeItem]);
   const searchCounts = useMemo(
@@ -494,6 +539,14 @@ export default function DashboardView({
           title={activeItem?.title ?? "Choose a YouTube video"}
           speaker={activeItem?.speaker ?? ""}
           sourceLine={!videoId ? "NO VIDEO SELECTED" : undefined}
+          caption={activeCaption}
+          captionStatus={
+            captionsLoading
+              ? "Хадмал ачааллаж байна..."
+              : captionsError
+                ? captionsError
+                : null
+          }
         />
         {notesCollapsed ? (
           <RecommendedVideos

@@ -120,6 +120,29 @@ export type ProcessResult = {
   segments: Segment[];
 };
 
+export type CaptionsResult = {
+  video_id: string;
+  source_lang: string;
+  segments: Segment[];
+};
+
+// Lightweight captions-only fetch (no translation/TTS) — fast enough for the
+// free-tier backend. Backed by POST /captions (youtube_transcript_api).
+export async function fetchCaptions(videoId: string): Promise<CaptionsResult> {
+  const response = await authFetch(`/captions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ video_id: videoId }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || "Captions failed to load");
+  }
+
+  return response.json();
+}
+
 export async function syncFirebaseUser(idToken: string): Promise<UserProfile> {
   const response = await fetch(`${API_BASE_URL}/auth/sync`, {
     method: "POST",

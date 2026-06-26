@@ -113,6 +113,19 @@ export async function registerBackendUser(payload: {
   return response.json();
 }
 
+export async function createDemoBackendSession(): Promise<RegisterResponse> {
+  const response = await fetch(`${API_BASE_URL}/auth/demo`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || "Demo login failed");
+  }
+
+  return response.json();
+}
+
 export async function syncFirebaseUser(idToken: string) {
   const response = await fetch(`${API_BASE_URL}/auth/sync`, {
     method: "POST",

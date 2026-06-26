@@ -7,7 +7,7 @@ import {
   signOut,
 } from "firebase/auth";
 
-import { registerBackendUser, syncFirebaseUser } from "@/lib/backend-api";
+import { createDemoBackendSession, registerBackendUser, syncFirebaseUser } from "@/lib/backend-api";
 import { firebaseAuth } from "@/lib/firebase";
 
 // Firebase нэвтрэлт амжилттай болсны дараа backend дээр хэрэглэгчийг үүсгэх/шинэчлэх.
@@ -54,7 +54,8 @@ export async function logout() {
 // Демо/танилцуулгад зориулсан түргэн нэвтрэлт.
 // Firebase Auth дээр энэ email/password-тэй хэрэглэгч урьдчилан үүсгэсэн байх ёстой.
 export async function loginAsDemo() {
-  const email = process.env.NEXT_PUBLIC_DEMO_EMAIL ?? "demo@moncast.app";
-  const password = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? "demo1234";
-  return loginWithEmail(email, password);
+  const demoSession = await createDemoBackendSession();
+  const credential = await signInWithCustomToken(firebaseAuth, demoSession.custom_token);
+  const backendUser = await syncCurrentUser();
+  return { firebaseUser: credential.user, backendUser: backendUser ?? demoSession.user };
 }

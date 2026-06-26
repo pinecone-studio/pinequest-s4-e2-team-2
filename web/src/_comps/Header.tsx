@@ -1,6 +1,6 @@
 "use client";
 
-import { Sun, Moon, LogIn, LogOut } from "lucide-react";
+import { LogIn, LogOut, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/_comps/providers/ThemeProvider";
 import { useAuth } from "@/_comps/providers/AuthProvider";
 import { Button } from "@/_comps/ui/Button";

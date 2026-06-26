@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Mail, Lock, Eye, EyeOff, Tv2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, Sparkles, Tv2, X } from "lucide-react";
 import { Button } from "@/_comps/ui/Button";
 import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
@@ -17,8 +17,8 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<"signin" | "register">("signin");
   const [error, setError] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError("");
     setIsLoading(true);
     try {
@@ -29,9 +29,7 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Нэвтрэлт амжилтгүй боллоо",
-      );
+      setError(err instanceof Error ? err.message : "Нэвтрэлт амжилтгүй боллоо.");
     } finally {
       setIsLoading(false);
     }
@@ -57,7 +55,7 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
       await loginAsDemo();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Demo sign-in failed");
+      setError(err instanceof Error ? err.message : "Туршилтаар нэвтрэхэд алдаа гарлаа.");
     } finally {
       setIsLoading(false);
     }
@@ -66,8 +64,8 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-6 duration-200">
@@ -76,12 +74,12 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Tv2 className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-heading font-bold text-foreground">
-              HELEX
-            </span>
+            <span className="font-heading font-bold text-foreground">HELEX</span>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Хаах"
             className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center transition-colors"
           >
             <X className="w-4 h-4 text-muted-foreground" />
@@ -104,9 +102,10 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
                 placeholder="name@example.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(event) => setEmail(event.target.value)}
                 className="pl-10"
                 required
               />
@@ -122,22 +121,20 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
               <Input
                 id="password"
                 type={showPassword ? "text" : "password"}
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
                 placeholder="••••••••"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
                 className="pl-10 pr-10"
                 required
               />
               <button
                 type="button"
-                onClick={() => setShowPassword((p) => !p)}
+                onClick={() => setShowPassword((value) => !value)}
+                aria-label={showPassword ? "Нууц үг нуух" : "Нууц үг харах"}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               >
-                {showPassword ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
@@ -153,11 +150,7 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
             Continue with Google
           </Button>
 
-          <Button
-            type="submit"
-            className="w-full font-semibold"
-            disabled={isLoading}
-          >
+          <Button type="submit" className="w-full font-semibold" disabled={isLoading}>
             {isLoading ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
@@ -178,15 +171,15 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
           onClick={handleDemoSignIn}
           disabled={isLoading}
         >
-          Демо-р үзэх
+          <Sparkles className="w-4 h-4 mr-2" />
+          Туршилтаар нэвтрэх
         </Button>
 
         <div className="mt-4 text-center">
           <p className="text-sm text-muted-foreground">
-            {mode === "signin"
-              ? "Бүртгэл байхгүй юу? "
-              : "Аль хэдийн бүртгэлтэй юу? "}
+            {mode === "signin" ? "Бүртгэл байхгүй юу? " : "Аль хэдийн бүртгэлтэй юу? "}
             <button
+              type="button"
               onClick={() => setMode(mode === "signin" ? "register" : "signin")}
               className="text-primary font-medium hover:underline"
             >

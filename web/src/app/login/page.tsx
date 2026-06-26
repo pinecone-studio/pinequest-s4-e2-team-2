@@ -3,12 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff, Loader2, Lock, LogIn, Mail, Sparkles } from "lucide-react";
+import AuthLayout from "@/_comps/AuthLayout";
+import GoogleIcon from "@/_comps/GoogleIcon";
 import { Button } from "@/_comps/ui/Button";
 import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
-import { LogIn, Mail, Lock, Loader2, Eye, EyeOff, Sparkles } from "lucide-react";
-import AuthLayout from "@/_comps/AuthLayout";
-import GoogleIcon from "@/_comps/GoogleIcon";
 import { signInWithGoogleAndSync } from "@/lib/google-auth";
 import { loginAsDemo, loginWithEmail } from "@/lib/auth";
 
@@ -20,15 +20,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError("");
     setLoading(true);
     try {
       await loginWithEmail(email, password);
       router.replace("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid email or password");
+      setError(err instanceof Error ? err.message : "Имэйл эсвэл нууц үг буруу байна.");
     } finally {
       setLoading(false);
     }
@@ -54,7 +54,7 @@ export default function LoginPage() {
       await loginAsDemo();
       router.replace("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Demo sign-in failed");
+      setError(err instanceof Error ? err.message : "Туршилтаар нэвтрэхэд алдаа гарлаа.");
     } finally {
       setLoading(false);
     }
@@ -63,13 +63,13 @@ export default function LoginPage() {
   return (
     <AuthLayout
       icon={LogIn}
-      title="Welcome back"
-      subtitle="Log in to your account"
+      title="Нэвтрэх"
+      subtitle="Аккаунтаараа нэвтэрнэ үү"
       footer={
         <>
-          Don&apos;t have an account?{" "}
+          Бүртгэл байхгүй юу?{" "}
           <Link href="/register" className="text-primary font-medium hover:underline">
-            Create one
+            Бүртгүүлэх
           </Link>
         </>
       }
@@ -105,7 +105,7 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
+          <Label htmlFor="email">Имэйл</Label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
             <Input
@@ -115,17 +115,18 @@ export default function LoginPage() {
               autoFocus
               placeholder="you@example.com"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(event) => setEmail(event.target.value)}
               className="pl-10 h-12"
               required
             />
           </div>
         </div>
+
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">Нууц үг</Label>
             <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-              Forgot password?
+              Нууц үг мартсан?
             </Link>
           </div>
           <div className="relative">
@@ -136,13 +137,13 @@ export default function LoginPage() {
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               className="pl-10 pr-10 h-12"
               required
             />
             <button
               type="button"
-              onClick={() => setShowPassword((v) => !v)}
+              onClick={() => setShowPassword((value) => !value)}
               aria-label={showPassword ? "Нууц үг нуух" : "Нууц үг харах"}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -150,14 +151,15 @@ export default function LoginPage() {
             </button>
           </div>
         </div>
+
         <Button type="submit" className="w-full h-12 font-medium" disabled={loading || !email || !password}>
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Logging in...
+              Нэвтэрч байна...
             </>
           ) : (
-            "Log in"
+            "Нэвтрэх"
           )}
         </Button>
       </form>
@@ -169,7 +171,7 @@ export default function LoginPage() {
         className="mt-4 w-full h-11 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-foreground/40 hover:bg-muted/40 transition-colors disabled:opacity-50"
       >
         <Sparkles className="w-4 h-4" />
-        Демо-р үзэх — бүртгэлгүйгээр туршаад үз
+        Туршилтаар нэвтрэх
       </button>
     </AuthLayout>
   );

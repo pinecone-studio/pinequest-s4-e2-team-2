@@ -40,6 +40,14 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _demo_identity() -> dict[str, str]:
+    return {
+        "uid": "sightahead-demo-user",
+        "email": "demo@sightahead.local",
+        "name": "Туршилтын хэрэглэгч",
+    }
+
+
 @router.post(
     "/register",
     response_model=RegisterResponse,
@@ -98,6 +106,43 @@ def register(request: RegisterRequest) -> RegisterResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed.",
+        ) from exc
+
+
+@router.post("/demo", response_model=RegisterResponse)
+def demo_login() -> RegisterResponse:
+    from firebase_admin import auth as firebase_auth
+
+    demo = _demo_identity()
+
+    try:
+        get_firebase_app()
+        try:
+            firebase_user = firebase_auth.get_user(demo["uid"])
+        except firebase_auth.UserNotFoundError:
+            try:
+                firebase_user = firebase_auth.get_user_by_email(demo["email"])
+            except firebase_auth.UserNotFoundError:
+                firebase_user = firebase_auth.create_user(
+                    uid=demo["uid"],
+                    email=demo["email"],
+                    display_name=demo["name"],
+                )
+
+        user = cache_service.upsert_user_from_token(
+            {
+                "uid": firebase_user.uid,
+                "email": firebase_user.email or demo["email"],
+                "name": firebase_user.display_name or demo["name"],
+                "picture": firebase_user.photo_url,
+            }
+        )
+        custom_token = firebase_auth.create_custom_token(firebase_user.uid).decode("utf-8")
+        return RegisterResponse(user=user, custom_token=custom_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Demo login failed.",
         ) from exc
 
 

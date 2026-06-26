@@ -18,6 +18,11 @@ export default function Home() {
     setSelectedVideo({ url, ...video });
   }, []);
 
+  const handleUnauthenticatedVideoSelect = useCallback((url: string) => {
+    setSelectedVideo({ url });
+    setShowSignIn(true);
+  }, []);
+
   if (loading) {
     return null;
   }
@@ -45,7 +50,7 @@ export default function Home() {
           <div className="w-full flex flex-col items-center justify-center">
             <AnimatedBackground />
             <div className="relative w-full flex flex-col items-center">
-              <SearchBox onSubmit={() => setShowSignIn(true)} />
+              <SearchBox onSubmit={handleUnauthenticatedVideoSelect} />
             </div>
           </div>
         </main>

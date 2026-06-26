@@ -714,10 +714,10 @@
 
 .dashboard-scholar-portrait {
   position: absolute;
-  right: -8px;
+  right: 14px;
   bottom: 0;
-  width: 340px;
-  max-width: 42vw;
+  width: 190px;
+  max-width: 24vw;
   pointer-events: none;
   animation: scholarRise 0.8s cubic-bezier(0.2, 0.85, 0.2, 1) both;
 }
@@ -727,16 +727,17 @@
   transform-origin: 70% 100%;
 }
 
-.dashboard-scholar-portrait img {
+.dashboard-scholar-portrait img,
+.dashboard-scholar-portrait svg {
   width: 100%;
   display: block;
   filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.6));
-  mask-image: linear-gradient(to bottom, #000 78%, transparent);
+  mask-image: linear-gradient(to bottom, #000 82%, transparent);
 }
 
 .dashboard-scholar-message {
   position: absolute;
-  right: 312px;
+  right: 220px;
   bottom: 150px;
   width: 360px;
   max-width: 44vw;
@@ -1447,5 +1448,157 @@
 .dashboard-app-shell .dashboard-saved-header span:last-child {
   font: 9.5px var(--font-mono), ui-monospace, monospace;
   letter-spacing: 0.22em;
+}
+
+/* ===================================================================
+   Цэвэр энгийн тэмдэглэлийн панель (UI шинэчлэл)
+   Burnt-paper зургийг хасч, dashboard-ийн dark-glass theme-д тааруулав.
+   Logic өөрчлөөгүй — зөвхөн өнгө/дэвсгэр.
+   =================================================================== */
+
+/* Панель — эргэн тойрны dark design-тай нийлсэн тунгалаг (video pane шиг).
+   YouTube маягийн monochrome: цагаан текст, саарал meta, өнгөт onцлолгүй. */
+.dashboard-app-shell .dashboard-notes-pane {
+  --dashboard-notes-ink: #f1f1f1;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* Burnt-paper давхаргуудыг нуух */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-paper,
+.dashboard-app-shell .dashboard-notes-pane .dashboard-paper-light {
+  display: none;
+}
+
+/* Бүх тэмдэглэлийн биет текст — цэвэр sans-serif, цагаан */
+.dashboard-app-shell .dashboard-notes-pane :is(
+  .dashboard-notes-title,
+  .dashboard-note-textarea,
+  .dashboard-note-row-text,
+  .dashboard-review-title
+) {
+  font-family: var(--font-onest), system-ui, sans-serif;
+  color: #f1f1f1;
+}
+
+/* Гарчиг — цэвэр, бат */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-notes-title {
+  color: #f1f1f1;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+/* Timestamp / тоо — monospace, саарал (YouTube meta) */
+.dashboard-app-shell .dashboard-notes-pane :is(
+  .dashboard-notes-count,
+  .dashboard-note-time,
+  .dashboard-note-row-time,
+  .dashboard-review-row span:first-child
+) {
+  color: #aaaaaa;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+}
+
+/* Бичих талбар — бараан дэвсгэр, цагаан текст */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-note-textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: #f1f1f1;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.dashboard-app-shell .dashboard-notes-pane .dashboard-note-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Туслах текст (hint, хоосон төлөв) — саарал */
+.dashboard-app-shell .dashboard-notes-pane :is(
+  .dashboard-note-hint,
+  .dashboard-note-shortcut,
+  .dashboard-empty-notes,
+  .dashboard-review-count
+) {
+  color: #aaaaaa;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+/* Тэмдэглэлийн мөр — цэвэр карт, hover-тэй (саарал) */
+.dashboard-app-shell .dashboard-notes-pane :is(.dashboard-note-row, .dashboard-review-row) {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dashboard-app-shell .dashboard-notes-pane :is(.dashboard-note-row, .dashboard-review-row):hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.dashboard-app-shell .dashboard-notes-pane .dashboard-note-row.is-new {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.dashboard-app-shell .dashboard-notes-pane .dashboard-note-row-text {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Tabs — monospace, uppercase, цагаан/саарал */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-notes-tabs button {
+  color: rgba(255, 255, 255, 0.55);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.dashboard-app-shell .dashboard-notes-pane .dashboard-notes-tabs button.is-active {
+  color: #ffffff;
+  border-bottom-color: #ffffff;
+}
+
+/* Товчнууд — улбар шар/хүрэн өнгийг хасч YouTube monochrome болгов */
+
+/* "Хадгалах" — цагаан pill, бараан текст (YouTube primary маяг) */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-save-button {
+  background: #f1f1f1;
+  color: #0f0f0f;
+}
+
+.dashboard-app-shell .dashboard-notes-pane .dashboard-save-button:hover {
+  background: #ffffff;
+}
+
+/* "Ask" болон collapse — саарал тунгалаг, цагаан текст */
+.dashboard-app-shell .dashboard-notes-pane :is(
+  .dashboard-ask-button,
+  .dashboard-notes-icon-button
+) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f1f1;
+}
+
+.dashboard-app-shell .dashboard-notes-pane :is(
+  .dashboard-ask-button,
+  .dashboard-notes-icon-button
+):hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* "Ask" товч доторх улбар цэгийг цагаан болгох */
+.dashboard-app-shell .dashboard-notes-pane .dashboard-ask-button span {
+  background: #f1f1f1;
 }
 

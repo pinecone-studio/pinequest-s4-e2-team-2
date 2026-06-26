@@ -26,8 +26,7 @@ export function NoteEditor({ draft, currentTime, onDraftChange, onAddNote }: Not
         placeholder="Бодлоо чөлөөтэй бичээрэй..."
         className="dashboard-note-textarea"
       />
-      <div className="dashboard-note-actions">
-        <span className="dashboard-note-shortcut">Ctrl/Command + Enter дарж хадгална</span>
+      <div className="dashboard-note-actions" style={{ justifyContent: "flex-end" }}>
         <button onClick={onAddNote} className="dashboard-save-button">
           Хадгалах
         </button>

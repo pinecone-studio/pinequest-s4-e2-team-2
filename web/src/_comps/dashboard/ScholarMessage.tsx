@@ -1,14 +1,14 @@
-"use client"
+"use client";
 
 type ScholarMessageProps = {
-  reply: string
-}
+  reply: string;
+};
 
 export function ScholarMessage({ reply }: ScholarMessageProps) {
   return (
     <div className="dashboard-scholar-message">
       <div className="dashboard-speech-bubble">
-        <div className="dashboard-speech-label">МЭРГЭН ӨГҮҮЛЭХ НЬ</div>
+        <div className="dashboard-speech-label">Shifu</div>
         <div className="dashboard-speech-text">
           {reply.split(" ").map((word, index) => (
             <span
@@ -22,5 +22,5 @@ export function ScholarMessage({ reply }: ScholarMessageProps) {
         <div className="dashboard-speech-tail" />
       </div>
     </div>
-  )
+  );
 }

@@ -159,7 +159,6 @@ export default function DashboardView({
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
-  const [showEnglish, setShowEnglish] = useState(true);
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
@@ -449,12 +448,10 @@ export default function DashboardView({
       <AmbientBackground />
       <DashboardHeader
         query={query}
-        showEnglish={showEnglish}
         onQueryChange={(value) => {
           setQuery(value);
           if (searchError) setSearchError("");
         }}
-        onToggleEnglish={() => setShowEnglish((value) => !value)}
         onSubmit={submitSearch}
         onBack={onBack}
         onLogout={onLogout}

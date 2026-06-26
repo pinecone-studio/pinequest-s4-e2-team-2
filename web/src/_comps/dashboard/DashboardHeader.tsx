@@ -6,9 +6,7 @@ import { Logo } from "./Logo"
 
 type DashboardHeaderProps = {
   query: string
-  showEnglish: boolean
   onQueryChange: (value: string) => void
-  onToggleEnglish: () => void
   onSubmit: () => void
   onBack: () => void
   onLogout?: () => void
@@ -16,9 +14,7 @@ type DashboardHeaderProps = {
 
 export function DashboardHeader({
   query,
-  showEnglish,
   onQueryChange,
-  onToggleEnglish,
   onSubmit,
   onBack,
   onLogout,
@@ -67,14 +63,6 @@ export function DashboardHeader({
       >
         {theme === "dark" ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
         <span>{themeLabel}</span>
-      </button>
-      <button
-        type="button"
-        onClick={onToggleEnglish}
-        title="Toggle English to Mongolian subtitles"
-        className={showEnglish ? "dashboard-language is-on" : "dashboard-language"}
-      >
-        {"EN -> MN"}
       </button>
       {onLogout && (
         <button type="button" onClick={onLogout} title="Logout" aria-label="Logout" className="dashboard-language">

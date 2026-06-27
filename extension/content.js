@@ -20,6 +20,7 @@ let isProcessing = false;
 let dubButton = null;
 let activeAudio = null;        // the currently playing dub <Audio>
 let audioListeners = null;     // AbortController to detach video sync listeners
+let segmentTimers = [];        // setTimeout IDs for per-segment audio scheduling
 
 // ── INITIALIZATION ──────────────────────────────────────────
 // YouTube is a Single Page App (SPA). When you click a new video,
@@ -200,33 +201,66 @@ function sendMessage(message) {
 // 2. Per-segment audio → sync each to video timestamps
 
 function playDubbedAudio(dubData) {
-  // Stop and detach any dub from a previous run before starting a new one.
   stopDubbedAudio();
 
-  // Simple version: single audio file
+  const video = document.querySelector("video");
+  if (!video) return;
+
+  // Per-segment base64 audio (backend /api/dub response)
+  if (dubData.translated_segments && dubData.translated_segments.length > 0) {
+    const segments = dubData.translated_segments;
+    video.volume = 0.1;
+
+    function scheduleSegments() {
+      segmentTimers.forEach(clearTimeout);
+      segmentTimers = [];
+      const now = video.currentTime;
+
+      segments.forEach((seg) => {
+        if (!seg.audio_b64 || seg.start < now) return;
+        const delayMs = (seg.start - now) * 1000;
+        const id = setTimeout(() => {
+          if (video.paused) return;
+          const blob = b64ToBlob(seg.audio_b64, "audio/mpeg");
+          const url = URL.createObjectURL(blob);
+          const clip = new Audio(url);
+          clip.onended = () => URL.revokeObjectURL(url);
+          clip.play().catch(() => {});
+        }, delayMs);
+        segmentTimers.push(id);
+      });
+    }
+
+    audioListeners = new AbortController();
+    const { signal } = audioListeners;
+    scheduleSegments();
+    video.addEventListener("play", scheduleSegments, { signal });
+    video.addEventListener("seeked", scheduleSegments, { signal });
+    video.addEventListener("pause", () => {
+      segmentTimers.forEach(clearTimeout);
+      segmentTimers = [];
+    }, { signal });
+    return;
+  }
+
+  // Fallback: single audio URL
   if (dubData.audio_url) {
     const audio = new Audio(dubData.audio_url);
     activeAudio = audio;
 
-    // Sync with the YouTube video player
-    const video = document.querySelector("video");
-    if (video) {
-      // AbortController lets us remove all three listeners at once later.
-      audioListeners = new AbortController();
-      const { signal } = audioListeners;
+    audioListeners = new AbortController();
+    const { signal } = audioListeners;
 
-      // Match audio position to video position
+    audio.currentTime = video.currentTime;
+    audio.play();
+
+    video.addEventListener("pause", () => audio.pause(), { signal });
+    video.addEventListener("play", () => {
       audio.currentTime = video.currentTime;
       audio.play();
-
-      // Pause/play audio when video pauses/plays
-      video.addEventListener("pause", () => audio.pause(), { signal });
-      video.addEventListener("play", () => {
-        audio.currentTime = video.currentTime;
-        audio.play();
-      }, { signal });
-      video.addEventListener("seeked", () => {
-        audio.currentTime = video.currentTime;
+    }, { signal });
+    video.addEventListener("seeked", () => {
+      audio.currentTime = video.currentTime;
       }, { signal });
 
       // Optional: lower video volume so dub is heard over original
@@ -242,6 +276,8 @@ function playDubbedAudio(dubData) {
 
 // Stops the current dub audio and removes the video sync listeners.
 function stopDubbedAudio() {
+  segmentTimers.forEach(clearTimeout);
+  segmentTimers = [];
   if (activeAudio) {
     activeAudio.pause();
     activeAudio.src = "";
@@ -251,6 +287,13 @@ function stopDubbedAudio() {
     audioListeners.abort();
     audioListeners = null;
   }
+}
+
+function b64ToBlob(b64, mimeType) {
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mimeType });
 }
 
 // ── UI HELPERS ──────────────────────────────────────────────

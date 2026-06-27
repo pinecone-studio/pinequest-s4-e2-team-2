@@ -15,9 +15,8 @@ google-generativeai
 httpx
 mutagen
 
-# Audio
-pydub
-azure-cognitiveservices-speech
+# Audio (duration only — pydub/azure SDK not used; TTS calls Azure REST via httpx)
+mutagen
 
 # FastAPI extras
 python-multipart

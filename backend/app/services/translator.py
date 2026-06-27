@@ -93,7 +93,7 @@ def _openai_translate_batch_timed(
     client = OpenAI(api_key=OPENAI_API_KEY)
     model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini")
     payload = [
-        {"text": text, "max_chars": max(1, round(duration * _CHARS_PER_SEC))}
+        {"text": text, "max_chars": max(10, round(duration * _CHARS_PER_SEC))}
         for text, duration in items
     ]
     prompt = (

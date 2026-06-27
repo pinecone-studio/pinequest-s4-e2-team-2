@@ -19,7 +19,7 @@ from app.utils.audio import audio_duration_ms_from_bytes
 from app.services.translator import translate_timed
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
-from app.services.cache_service import get_cached_video, save_summary, get_latest_summary
+from app.services.cache_service import get_cached_video, cache_video, save_summary, get_latest_summary
 from app.models.entities import SummaryCreate
 from app.models.segment import Segment
 
@@ -150,6 +150,17 @@ async def process_video(request: ProcessRequest):
             tts_failures,
             request.video_id,
         )
+
+        if request.video_id:
+            try:
+                cache_video(request.video_id, {"segments": [
+                    {"start": s.start, "duration": s.duration, "text": s.text,
+                     "translated_text": translations[i] if i < len(translations) else s.text}
+                    for i, s in enumerate(segments_in)
+                ]})
+            except Exception:
+                logger.warning("/process cache_video failed (non-fatal)", exc_info=True)
+
         yield _sse({"done": True, "total": total})
 
     return StreamingResponse(
@@ -157,6 +168,62 @@ async def process_video(request: ProcessRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class DubRequest(BaseModel):
+    video_id: str | None = None
+    source_lang: str = "en"
+    segments: list[SegmentInput] = []
+
+
+@router.post("/api/dub")
+async def dub_video(request: DubRequest):
+    """Chrome extension endpoint — same pipeline as /process but returns plain JSON
+    (not SSE) so the extension can call response.json() directly."""
+    if not request.segments:
+        raise HTTPException(status_code=400, detail="No segments provided.")
+
+    segments_in = request.segments
+    total = len(segments_in)
+
+    logger.info("/api/dub ← video_id=%s segments=%d", request.video_id, total)
+
+    translations = translate_timed(
+        [(seg.text, seg.duration) for seg in segments_in], request.source_lang
+    )
+
+    translated_segments = []
+    for i, seg in enumerate(segments_in):
+        mn_text = translations[i] if i < len(translations) else seg.text
+        try:
+            audio_bytes = synthesize(mn_text)
+            audio_ms = audio_duration_ms_from_bytes(audio_bytes)
+            audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+        except Exception:
+            logger.exception("/api/dub TTS failed segment %d", i)
+            audio_b64, audio_ms = "", 0
+
+        translated_segments.append({
+            "start": seg.start,
+            "duration": seg.duration,
+            "text": seg.text,
+            "translated_text": mn_text,
+            "audio_b64": audio_b64,
+            "audio_ms": audio_ms,
+        })
+
+    if request.video_id:
+        try:
+            cache_video(request.video_id, {"segments": [
+                {"start": s["start"], "duration": s["duration"],
+                 "text": s["text"], "translated_text": s["translated_text"]}
+                for s in translated_segments
+            ]})
+        except Exception:
+            logger.warning("/api/dub cache_video failed (non-fatal)", exc_info=True)
+
+    logger.info("/api/dub → done: %d segments (video_id=%s)", total, request.video_id)
+    return {"translated_segments": translated_segments, "audio_url": None}
 
 
 @router.post("/summary")

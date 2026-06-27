@@ -18,7 +18,8 @@ from app.services.caption_fetcher import fetch_captions
 from app.services.translator import to_mongolian
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
-from app.services.cache_service import get_cached_video, cache_video
+from app.services.cache_service import get_cached_video, cache_video, save_summary, get_latest_summary
+from app.models.entities import SummaryCreate
 from app.utils.video import extract_video_id
 from app.models.segment import Segment
 
@@ -118,6 +119,10 @@ async def process_video(request: ProcessRequest):
 
 @router.post("/summary")
 async def get_summary(request: SummaryRequest):
+    existing = get_latest_summary(request.video_id)
+    if existing:
+        return {"video_id": request.video_id, "summary": existing.summary_text}
+
     cached = get_cached_video(request.video_id)
     if not cached:
         raise HTTPException(
@@ -126,5 +131,9 @@ async def get_summary(request: SummaryRequest):
         )
 
     segments = [Segment(**s) for s in cached.get("segments", [])]
-    summary = summarize(segments)
-    return {"video_id": request.video_id, "summary": summary}
+    summary_text = summarize(segments)
+    save_summary(
+        user_id=None,
+        payload=SummaryCreate(video_id=request.video_id, summary_text=summary_text, model_name="gemini-1.5-flash"),
+    )
+    return {"video_id": request.video_id, "summary": summary_text}

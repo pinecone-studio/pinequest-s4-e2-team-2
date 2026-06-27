@@ -15,7 +15,7 @@
 
 // ── CONFIG ──────────────────────────────────────────────────
 // TODO: Replace with your actual Render backend URL
-const BACKEND_URL = "https://your-render-backend.onrender.com";
+const BACKEND_URL = "https://pinequest-s4-e2-sightahead.onrender.com";
 
 // ── MESSAGE LISTENER ────────────────────────────────────────
 // This is the "API router" of the extension.

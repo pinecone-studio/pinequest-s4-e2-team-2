@@ -18,6 +18,8 @@
 let currentVideoId = null;
 let isProcessing = false;
 let dubButton = null;
+let activeAudio = null;        // the currently playing dub <Audio>
+let audioListeners = null;     // AbortController to detach video sync listeners
 
 // ── INITIALIZATION ──────────────────────────────────────────
 // YouTube is a Single Page App (SPA). When you click a new video,
@@ -51,6 +53,10 @@ function onVideoChanged() {
   if (videoId && videoId !== currentVideoId) {
     currentVideoId = videoId;
     resetUI();
+    // YouTube may have re-rendered the actions bar and dropped our button.
+    if (!document.getElementById("sightahead-dub-btn")) {
+      injectDubButton();
+    }
     console.log("[SightAhead] New video:", currentVideoId);
   }
 }
@@ -66,8 +72,18 @@ function extractVideoId() {
 // This is the main user interaction point.
 
 function injectDubButton() {
-  // Wait for YouTube's UI to load (it's an SPA, elements load async)
+  // Wait for YouTube's UI to load (it's an SPA, elements load async).
+  // Give up after ~30s so we don't poll forever on pages without the bar.
+  let attempts = 0;
+  const maxAttempts = 60;
+
   const waitForElement = setInterval(() => {
+    if (++attempts > maxAttempts) {
+      clearInterval(waitForElement);
+      console.warn("[SightAhead] Actions bar not found; button not injected.");
+      return;
+    }
+
     // This is the container for like/share/etc buttons below the video
     const actionsBar = document.querySelector("#actions #top-level-buttons-computed")
       || document.querySelector("#actions");
@@ -92,6 +108,7 @@ function injectDubButton() {
 }
 
 function resetUI() {
+  stopDubbedAudio();
   if (dubButton) {
     dubButton.textContent = "🎙 Dub to Mongolian";
     dubButton.className = "sightahead-btn";
@@ -113,7 +130,7 @@ async function onDubClick() {
   const videoId = extractVideoId();
   if (!videoId) {
     showError("Can't find video ID in URL");
-    return;
+    return; // showError already resets isProcessing
   }
 
   try {
@@ -149,6 +166,9 @@ async function onDubClick() {
     updateButton("🔊 Playing dubbed audio", false);
     playDubbedAudio(dubResult.data);
 
+    // Flow is done — release the lock so the user can re-trigger.
+    isProcessing = false;
+
   } catch (err) {
     console.error("[SightAhead] Error:", err);
     showError(err.message);
@@ -180,34 +200,57 @@ function sendMessage(message) {
 // 2. Per-segment audio → sync each to video timestamps
 
 function playDubbedAudio(dubData) {
+  // Stop and detach any dub from a previous run before starting a new one.
+  stopDubbedAudio();
+
   // Simple version: single audio file
   if (dubData.audio_url) {
     const audio = new Audio(dubData.audio_url);
+    activeAudio = audio;
 
     // Sync with the YouTube video player
     const video = document.querySelector("video");
     if (video) {
+      // AbortController lets us remove all three listeners at once later.
+      audioListeners = new AbortController();
+      const { signal } = audioListeners;
+
       // Match audio position to video position
       audio.currentTime = video.currentTime;
       audio.play();
 
       // Pause/play audio when video pauses/plays
-      video.addEventListener("pause", () => audio.pause());
+      video.addEventListener("pause", () => audio.pause(), { signal });
       video.addEventListener("play", () => {
         audio.currentTime = video.currentTime;
         audio.play();
-      });
+      }, { signal });
       video.addEventListener("seeked", () => {
         audio.currentTime = video.currentTime;
-      });
+      }, { signal });
 
       // Optional: lower video volume so dub is heard over original
       video.volume = 0.1;
+    } else {
+      audio.play();
     }
   }
 
   // TODO: If your backend returns per-segment audio, you'd iterate
   // segments and schedule each audio clip at the right timestamp
+}
+
+// Stops the current dub audio and removes the video sync listeners.
+function stopDubbedAudio() {
+  if (activeAudio) {
+    activeAudio.pause();
+    activeAudio.src = "";
+    activeAudio = null;
+  }
+  if (audioListeners) {
+    audioListeners.abort();
+    audioListeners = null;
+  }
 }
 
 // ── UI HELPERS ──────────────────────────────────────────────

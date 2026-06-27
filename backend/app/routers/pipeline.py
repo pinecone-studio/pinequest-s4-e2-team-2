@@ -1,25 +1,25 @@
-"""Synchronous dub pipeline: YouTube captions -> Mongolian translation -> TTS dub.
+"""Streaming dub pipeline.
 
-PATH A only (youtube_transcript_api captions). The yt-dlp + Whisper audio
-fallback (Path B) has been removed: it needs heavy ML deps and gets IP-blocked
-by YouTube on datacenter hosts anyway. If a video has no captions, /process
-returns 422.
+The YouTube transcript is fetched CLIENT-SIDE (Vercel /api/youtube/transcript)
+because datacenter IPs get blocked by YouTube. The client POSTs the raw segments
+here; we batch-translate them to Mongolian (duration-aware) and run TTS per
+segment, streaming each finished segment back over SSE with inline base64 audio
+so the UI can play it like a live dub.
 """
 
+import base64
+import json
 import logging
-import os
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.config import get_settings
-from app.utils.audio import save_audio, audio_duration_ms_from_bytes
-from app.services.caption_fetcher import fetch_captions
-from app.services.translator import to_mongolian
+from app.utils.audio import audio_duration_ms_from_bytes
+from app.services.translator import translate_timed
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
-from app.services.cache_service import get_cached_video, cache_video
-from app.utils.video import extract_video_id
+from app.services.cache_service import get_cached_video
 from app.models.segment import Segment
 
 logger = logging.getLogger(__name__)
@@ -27,76 +27,83 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["pipeline"])
 
 
+class SegmentInput(BaseModel):
+    start: float = 0.0
+    duration: float = 0.0
+    text: str
+
+
 class ProcessRequest(BaseModel):
-    video_id: str
+    video_id: str | None = None
+    source_lang: str = "en"
+    segments: list[SegmentInput] = []
 
 
 class SummaryRequest(BaseModel):
     video_id: str
 
 
-def _empty_process_result(video_id: str) -> dict:
-    return {"video_id": video_id, "segments": []}
-
-
-def _local_processing_enabled() -> bool:
-    return os.getenv("ENABLE_LOCAL_PROCESSING", "").strip().lower() in {"1", "true", "yes"}
+def _sse(obj: dict) -> str:
+    """Format one Server-Sent Events message."""
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
 @router.post("/process")
 async def process_video(request: ProcessRequest):
-    video_id = extract_video_id(request.video_id)
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
-
-    cached = get_cached_video(video_id)
-    if cached:
-        return cached
-
-    if get_settings().environment == "local" and not _local_processing_enabled():
-        result = _empty_process_result(video_id)
-        cache_video(video_id, result)
-        return result
-
-    try:
-        # PATH A only: YouTube captions (youtube_transcript_api).
-        caption_result = fetch_captions(video_id)
-        if not caption_result:
-            raise HTTPException(
-                status_code=422,
-                detail="No captions available for this video.",
-            )
-        source_lang, segments = caption_result
-        logger.info("caption found: %s (%d segments, lang=%s)", video_id, len(segments), source_lang)
-
-        # Translate to Mongolian (batched — few API calls, not one per segment).
-        logger.info("translating: %s", video_id)
-        segments = to_mongolian(segments, source_lang)
-
-        # TTS (dub) for each segment -> upload to Firebase Storage.
-        result_segments = []
-        for i, seg in enumerate(segments):
-            audio_bytes = synthesize(seg.translated_text or seg.text)
-            audio_ms = audio_duration_ms_from_bytes(audio_bytes)  # before upload
-            audio_url = save_audio(audio_bytes, video_id, i)      # public Storage URL
-            seg = seg.model_copy(update={"audio_path": audio_url, "audio_ms": audio_ms})
-            result_segments.append(seg.model_dump())
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("processing failed for %s", video_id)
-        if get_settings().environment == "local":
-            result = _empty_process_result(video_id)
-            cache_video(video_id, result)
-            return result
+    segments_in = request.segments
+    if not segments_in:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Video processing is temporarily unavailable.",
-        ) from exc
+            status_code=400,
+            detail="No segments provided. Send the client-fetched transcript in `segments`.",
+        )
 
-    result = {"video_id": video_id, "segments": result_segments}
-    cache_video(video_id, result)
-    return result
+    def event_stream():
+        total = len(segments_in)
+
+        # 1. Batch-translate everything up front (few API calls), duration-aware.
+        logger.info("translating %d segments (lang=%s)", total, request.source_lang)
+        try:
+            translations = translate_timed(
+                [(seg.text, seg.duration) for seg in segments_in], request.source_lang
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("translation failed")
+            yield _sse({"error": f"translation failed: {exc}"})
+            return
+
+        # 2. TTS per segment, streaming each one back as soon as it's ready.
+        for i, seg in enumerate(segments_in):
+            mn_text = translations[i] if i < len(translations) else seg.text
+            try:
+                audio_bytes = synthesize(mn_text)
+                audio_ms = audio_duration_ms_from_bytes(audio_bytes)
+                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            except Exception:  # noqa: BLE001
+                logger.exception("TTS failed for segment %d", i)
+                audio_b64, audio_ms = "", 0
+
+            yield _sse(
+                {
+                    "index": i,
+                    "total": total,
+                    "segment": {
+                        "offset": seg.start,
+                        "duration": seg.duration,
+                        "text": seg.text,
+                        "translated_text": mn_text,
+                        "audio_b64": audio_b64,
+                        "audio_ms": audio_ms,
+                    },
+                }
+            )
+
+        yield _sse({"done": True, "total": total})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/summary")

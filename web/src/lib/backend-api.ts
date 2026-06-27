@@ -64,6 +64,7 @@ export type Segment = {
   translated_text: string | null;
   audio_path: string | null;
   audio_ms: number | null;
+  audio_b64?: string | null;
 };
 
 export type ProcessResult = {

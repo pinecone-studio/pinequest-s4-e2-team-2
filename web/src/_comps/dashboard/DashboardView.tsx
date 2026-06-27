@@ -41,6 +41,7 @@ import type {
   YouTubeVideoSearchResult,
 } from "@/lib/youtube-search";
 import { useProcessedVideo } from "./useProcessedVideo";
+import { base64ToBlobUrl } from "@/lib/process-stream";
 import { toast } from "@/_comps/ui/Sonner";
 
 export type DashboardVideoSelection = {
@@ -199,6 +200,7 @@ export default function DashboardView({
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState("");
   const playbackRef = useRef({ time: 0, duration: 0 });
+  const lastAudioStartRef = useRef<number>(-1);
 
   // Fetch the user's saved watch history from the backend.
   const reloadHistory = useCallback(async () => {
@@ -322,6 +324,20 @@ export default function DashboardView({
   useEffect(() => {
     playbackRef.current = { time: player.time, duration: player.duration };
   }, [player.duration, player.time]);
+
+  // Play dubbed audio for the active segment, synced to player.time.
+  useEffect(() => {
+    if (!player.playing) return;
+    const seg = processedSegments.find(
+      (s) => s.audio_b64 && player.time >= s.start && player.time < s.start + s.duration,
+    );
+    if (!seg?.audio_b64 || seg.start === lastAudioStartRef.current) return;
+    lastAudioStartRef.current = seg.start;
+    const url = base64ToBlobUrl(seg.audio_b64);
+    const clip = new Audio(url);
+    clip.play().catch(() => {});
+    clip.onended = () => URL.revokeObjectURL(url);
+  }, [player.time, player.playing, processedSegments]);
 
   // Log the caption-fetch lifecycle for the selected video.
   useEffect(() => {

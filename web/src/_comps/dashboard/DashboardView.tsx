@@ -232,7 +232,7 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
-  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender);
+  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender, player.playbackRate);
   const reply = useMemo(() => buildScholarReply(notes), [notes]);
   const recommendationSearchQuery = useMemo(() => recommendationQuery(activeItem), [activeItem]);
   const searchCounts = useMemo(

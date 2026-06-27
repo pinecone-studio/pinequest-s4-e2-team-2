@@ -55,33 +55,45 @@ export function VideoPane(props: VideoPaneProps) {
       />
       {props.hasVideo && props.onToggleDub && (
         <div className="dashboard-dub-toggle">
-          <button
-            onClick={props.onToggleDub}
-            disabled={isLoading}
-            className={`dashboard-dub-btn${isMongolian ? " active" : ""}`}
-          >
-            {isLoading
-              ? "Бэлдэж байна..."
-              : isMongolian
-              ? "🔊 Монгол дуб"
-              : "▶ Эх бичлэг"}
-          </button>
-
-          {isMongolian && props.onToggleGender && (
+          <div className="dashboard-dub-buttons">
             <button
-              onClick={props.onToggleGender}
+              onClick={props.onToggleDub}
               disabled={isLoading}
-              className="dashboard-dub-btn"
-              title="Хоолой солих"
+              className={`dashboard-dub-btn${isMongolian ? " active" : ""}`}
             >
-              {props.voiceGender === "male" ? "♂ Эрэгтэй" : "♀ Эмэгтэй"}
+              {isLoading
+                ? "Бэлдэж байна..."
+                : isMongolian
+                ? "🔊 Монгол дуб"
+                : "▶ Эх бичлэг"}
             </button>
+
+            {isMongolian && props.onToggleGender && (
+              <button
+                onClick={props.onToggleGender}
+                disabled={isLoading}
+                className="dashboard-dub-btn"
+                title="Хоолой солих"
+              >
+                {props.voiceGender === "male" ? "♂ Эрэгтэй" : "♀ Эмэгтэй"}
+              </button>
+            )}
+          </div>
+
+          {isLoading && props.dubProgress && props.dubProgress.total > 0 && (
+            <div className="dashboard-dub-progress">
+              <div className="dashboard-dub-progress-track">
+                <div
+                  className="dashboard-dub-progress-fill"
+                  style={{ width: `${Math.round((props.dubProgress.done / props.dubProgress.total) * 100)}%` }}
+                />
+              </div>
+              <span className="dashboard-dub-status">{dubStatusText}</span>
+            </div>
           )}
 
-          {dubStatusText && (
-            <span className="dashboard-dub-status">
-              {dubStatusText}
-            </span>
+          {!isLoading && dubStatusText && (
+            <span className="dashboard-dub-status">{dubStatusText}</span>
           )}
 
           {props.dubError && (

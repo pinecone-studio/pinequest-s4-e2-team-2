@@ -2,6 +2,7 @@ export type YouTubePlayer = {
   destroy?: () => void
   getCurrentTime?: () => number
   getDuration?: () => number
+  getPlaybackRate?: () => number
   getIframe?: () => HTMLIFrameElement
   mute?: () => void
   unMute?: () => void

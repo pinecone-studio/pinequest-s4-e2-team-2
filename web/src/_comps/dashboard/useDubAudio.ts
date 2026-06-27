@@ -10,6 +10,7 @@ export function useDubAudio(
   currentTime: number,
   enabled: boolean,
   gender: "male" | "female",
+  playbackRate: number = 1,
 ) {
   const [segments, setSegments] = useState<Segment[]>([])
   const [step, setStep] = useState<DubStep>("idle")
@@ -99,6 +100,11 @@ export function useDubAudio(
     setStep("idle")
   }, [enabled])
 
+  // Apply playback rate changes to the currently playing audio
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate
+  }, [playbackRate])
+
   // Sync audio to video playback time — runs every 250ms via currentTime
   useEffect(() => {
     if (!enabled || segments.length === 0) return
@@ -137,6 +143,7 @@ export function useDubAudio(
       : `${(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "")}${seg.audio_path}`
     const audio = new Audio(audioUrl)
     audio.currentTime = Math.max(0, currentTime - seg.start)
+    audio.playbackRate = playbackRate
     audioRef.current = audio
     audio.play().catch(() => {})
   }, [currentTime, segments, enabled])

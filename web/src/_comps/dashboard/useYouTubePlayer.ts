@@ -10,6 +10,7 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(fallbackDuration)
+  const [playbackRate, setPlaybackRate] = useState(1)
 
   useEffect(() => {
     if (!videoId) {
@@ -26,6 +27,7 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
     const pollId = setInterval(() => {
       const player = playerRef.current
       if (player?.getCurrentTime) setTime(player.getCurrentTime() || 0)
+      if (player?.getPlaybackRate) setPlaybackRate(player.getPlaybackRate() || 1)
     }, 250)
 
     loadYouTubeApi().then((YT) => {
@@ -81,7 +83,7 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
   const mute = useCallback(() => playerRef.current?.mute?.(), [])
   const unMute = useCallback(() => playerRef.current?.unMute?.(), [])
 
-  return { containerRef, ready, playing, time, duration, play, pause, toggle, seek, mute, unMute }
+  return { containerRef, ready, playing, time, duration, playbackRate, play, pause, toggle, seek, mute, unMute }
 }
 
 function styleIframe(iframe?: HTMLIFrameElement) {

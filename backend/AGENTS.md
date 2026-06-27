@@ -5,9 +5,9 @@
 **Sightahead** нь YouTube видеог монгол хэлээр subtitle болон дубтайгаар үзэх боломж олгодог веб апп.
 
 Хэрэглэгч YouTube URL оруулахад:
-1. Caption/audio татаж авна
+1. Browser-ээс YouTube caption татна (Railway IP block тойрох)
 2. Монгол хэл рүү орчуулна
-3. Монгол дуб гаргана
+3. Azure TTS-ээр монгол дуб гаргана
 4. Subtitle + дуб хоёуланг хэрэглэгчид саадгүй харуулна
 
 ---
@@ -16,7 +16,7 @@
 
 ```
 Frontend (Next.js)  →  Vercel
-Backend (FastAPI)   →  Railway
+Backend (FastAPI)   →  Railway (512MB limit)
 Database            →  Firebase Auth + Firestore + Storage
 ```
 
@@ -26,16 +26,17 @@ Frontend болон Backend нь REST API-аар харилцана.
 
 ## Backend Stack
 
-| Зорилго | Технологи |
-|---------|-----------|
-| Framework | FastAPI (Python) |
-| STT (PATH A) | youtube_transcript_api |
-| STT (PATH B fallback) | yt-dlp + faster-whisper |
-| Орчуулга | Gemini API |
-| TTS | Coqui TTS |
-| Speaker detection | pyannote/speaker-diarization |
-| Database | Firebase Auth + Firestore + Storage |
-| Deploy | Railway |
+| Зорилго | Технологи | Тэмдэглэл |
+|---------|-----------|-----------|
+| Framework | FastAPI (Python) | |
+| Caption (PATH A) | youtube_transcript_api | Browser-ээс дамжуулна |
+| Орчуулга | OpenAI (gpt-4o-mini) | TRANSLATION_PROVIDER=openai |
+| Орчуулга fallback | Gemini API | TRANSLATION_PROVIDER=gemini |
+| TTS | Azure Cognitive Services | mn-MN-YesuiNeural / BataaNeural |
+| Database | Firebase Auth + Firestore + Storage | |
+| Deploy | Railway | |
+
+> **Устгагдсан:** yt-dlp, faster-whisper (PATH B), Coqui TTS, pyannote, ElevenLabs, PostgreSQL — Railway 512MB-д багтахгүй тул хасагдсан.
 
 ---
 
@@ -47,22 +48,25 @@ backend/
 │   ├── main.py              # FastAPI entry point, router бүртгэл
 │   ├── config.py            # env vars, API keys
 │   ├── routers/
-│   │   ├── video.py         # POST /process — үндсэн pipeline
-│   │   ├── summary.py       # POST /summary — видео тайлбар
-│   │   └── auth.py          # POST /auth — нэвтрэлт
+│   │   ├── pipeline.py      # POST /process, POST /summary — үндсэн pipeline
+│   │   ├── video.py         # POST /videos/process — job queue (хэрэгжээгүй)
+│   │   ├── summary.py       # GET /summaries
+│   │   ├── auth.py          # POST /auth — нэвтрэлт
+│   │   ├── tts.py           # POST /tts — TTS endpoint
+│   │   └── voice.py         # дуу хоолой тохиргоо
 │   ├── services/
 │   │   ├── caption_fetcher.py   # YouTube caption татах (PATH A)
-│   │   ├── whisper_service.py   # yt-dlp + Whisper fallback (PATH B)
-│   │   ├── translator.py        # Gemini API орчуулга
-│   │   ├── tts_service.py       # Coqui TTS + pyannote дуб
-│   │   ├── cache_service.py     # Firestore repository/cache
-│   │   └── summary_service.py   # Gemini API summary
+│   │   ├── translator.py        # OpenAI / Gemini орчуулга
+│   │   ├── tts_service.py       # Azure TTS дуб
+│   │   ├── cache_service.py     # Firestore + local file cache
+│   │   ├── summary_service.py   # OpenAI / Gemini summary
+│   │   ├── firebase_service.py  # Firebase Storage upload
+│   │   └── auth_service.py      # Firebase Auth verify
 │   ├── models/
 │   │   ├── segment.py       # Segment dataclass
-│   │   ├── job.py           # Job state
-│   │   └── schema.prisma    # Legacy note; runtime uses Firestore docs
+│   │   └── job.py           # Job state
 │   └── utils/
-│       ├── audio.py         # pad / stretch / merge
+│       ├── audio.py         # Firebase Storage upload, duration
 │       └── lang.py          # language code normalization
 ├── requirements.txt
 ├── Dockerfile
@@ -75,24 +79,21 @@ backend/
 ## Pipeline
 
 ```
-POST /process { video_id }
+POST /process { video_id, segments?, source_lang? }
         ↓
-Cache шалгах (Firestore)
+Cache шалгах (Firestore / local JSON)
         ↓ cache miss
-Caption cascade
-  PATH A: youtube_transcript_api → caption татна (хурдан)
-  PATH B: yt-dlp + faster-whisper → fallback
+Caption:
+  segments ирвэл (frontend-ээс) → шууд ашиглах  ← YouTube IP block тойрох
+  segments ирэхгүй бол → caption_fetcher.py (Railway-д IP block эрсдэлтэй)
         ↓
 Segment[ ] { start, duration, text, source }
         ↓
-Gemini API → translated_text нэмнэ
+OpenAI (gpt-4o-mini) → translated_text нэмнэ
         ↓
-pyannote → эрэгтэй/эмэгтэй тодорхойлно
-Coqui TTS → тохирох хоолойгоор дуб гаргана
+Azure TTS (mn-MN-YesuiNeural) → .mp3 → Firebase Storage upload
         ↓
-audio.py → pad / stretch / merge
-        ↓
-.vtt subtitle + .mp3 дуб → cache хадгална → client
+segments буцаах → frontend subtitle + audio тоглуулна
 ```
 
 ---
@@ -110,41 +111,22 @@ class Segment(BaseModel):
     audio_ms: int | None = None
 ```
 
-Энэ dataclass нь pipeline-ийн бүх алхамд нийтлэг хэрэглэгдэх суурь бүтэц.
-
----
-
-## Database Schema
-
-```
-User
-  id, email, name, password_hash, created_at
-
-Video                          ← cache үүрэг
-  id, youtube_id (unique), title, duration_sec,
-  subtitle_path, dub_path, summary, processed_at
-
-Note
-  id, user_id (FK), video_id (FK),
-  content, timestamp_sec, created_at
-
-WatchHistory
-  id, user_id (FK), video_id (FK),
-  watched_at, progress_sec
-```
-
 ---
 
 ## API Endpoints
 
 ```
 POST /process
-  body: { video_id: string }
-  return: { subtitle_url, dub_url, segments: Segment[] }
+  body: { video_id: string, segments?: CaptionSegment[], source_lang?: string }
+  return: { segments: Segment[] }
 
 POST /summary
   body: { video_id: string }
   return: { summary: string }
+
+POST /tts
+  body: { text: string, voice?: string }
+  return: { audio_url: string, duration_ms: int }
 
 POST /auth/register
 POST /auth/login
@@ -156,44 +138,39 @@ POST /auth/logout
 ## Env Variables
 
 ```
+APP_NAME=SightAhead API
+ENVIRONMENT=local
+
+# CORS
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# OpenAI (орчуулга — үндсэн)
+OPENAI_API_KEY=
+OPENAI_TRANSLATION_MODEL=gpt-4o-mini
+TRANSLATION_PROVIDER=openai
+
+# Azure TTS
+AZURE_SPEECH_KEY=
+AZURE_SPEECH_REGION=southeastasia
+TTS_PROVIDER=azure
+
+# Firebase
+FIREBASE_PROJECT_ID=
+FIREBASE_STORAGE_BUCKET=
+FIREBASE_CREDENTIALS_PATH=firebase-credentials.json
+
+# Gemini (орчуулга fallback)
 GEMINI_API_KEY=
-DATABASE_URL=
-ELEVENLABS_API_KEY=      # demo TTS
-HF_TOKEN=                # pyannote (HuggingFace)
+
+# Локал тест
+ENABLE_LOCAL_PROCESSING=true
 ```
-
----
-
-## Хүндрэлүүд
-
-- `yt-dlp` Vercel дээр ажиллахгүй → Railway дээр backend тусдаа
-- YouTube ToS: caption байвал audio татахгүй (PATH A эхлээд)
-- Монгол TTS: Coqui монгол хэл бага — ElevenLabs demo-д ашиглах
-- Урт видео: chunking хэрэгтэй (60+ мин)
-- pyannote: HuggingFace token шаардлагатай
-
----
-
-## Ажиллах дараалал
-
-1. `backend/app/main.py` — FastAPI app үүсгэх
-2. `backend/app/config.py` — env vars
-3. `backend/app/models/segment.py` — Segment dataclass
-4. `backend/app/services/caption_fetcher.py` — PATH A
-5. `backend/app/services/whisper_service.py` — PATH B
-6. `backend/app/services/translator.py` — Gemini API
-7. `backend/app/services/tts_service.py` — Coqui + pyannote
-8. `backend/app/services/cache_service.py` — Firestore
-9. `backend/app/routers/video.py` — pipeline нэгтгэх
-10. `backend/app/routers/summary.py`
-11. `Dockerfile` — Railway deploy
 
 ---
 
 ## Чухал зарчим
 
 - Cache эхлээд шалгах — боловсруулалт давтахгүй
-- PATH A → PATH B: caption байвал audio татахгүй
-- Segment dataclass нь pipeline-ийн бүх алхамд нийтлэг
-- Эрэгтэй/эмэгтэй хоолой тусад нь — pyannote дарааллан TTS
-- Voice cloning (v2) — одоо хэрэгжүүлэхгүй, architecture-д зай үлдэх
+- YouTube IP block → frontend (browser) caption татаж backend-д дамжуулна
+- Railway 512MB — heavy ML (Whisper, pyannote) нэмэхгүй
+- Firebase credentials → repo-д commit хийхгүй

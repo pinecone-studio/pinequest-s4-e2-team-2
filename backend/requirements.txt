@@ -6,38 +6,18 @@ pydantic
 # Auth / Database (Firebase Auth + Firestore)
 firebase-admin
 
-# Caption / STT
+# Caption
 youtube-transcript-api
-# YouTube changes its extraction signature often; yt-dlp ships near-daily
-# releases to keep up — re-pin this regularly (github.com/yt-dlp/yt-dlp/releases).
-# Full extraction (nsig/PO token solving) also needs a JS runtime on the
-# build host — install `deno` in the Render build step alongside this.
-yt-dlp==2026.3.17
-faster-whisper
 
 # Translation + Summary
 openai
 google-generativeai
-openai
 httpx
 mutagen
 
 # Audio
 pydub
-
-# Database (legacy cache fallback)
-sqlalchemy
-psycopg2-binary
-
-# Auth (email/password extension point)
-python-jose[cryptography]
-passlib[bcrypt]
+azure-cognitiveservices-speech
 
 # FastAPI extras
 python-multipart
-
-# TTS
-elevenlabs
-
-# --- Tur orхисон (1GB+) ---
-# pyannote.audio   <- эрэгтэй/эмэгтэй speaker detection

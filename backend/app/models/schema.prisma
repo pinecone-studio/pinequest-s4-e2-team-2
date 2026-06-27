@@ -1,3 +1,0 @@
-// Firebase Firestore is the MVP database for this backend.
-// Runtime code does not use Prisma right now.
-// See backend/docs/firebase-schema.md for the working schema.

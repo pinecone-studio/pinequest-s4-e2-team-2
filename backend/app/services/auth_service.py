@@ -13,6 +13,8 @@ def _firebase_credentials_configured() -> bool:
     settings = get_settings()
     if settings.firebase_credentials_json:
         return True
+    if settings.firebase_credentials_json_base64:
+        return True
     # A configured path still counts as "missing" if the file isn't actually
     # there (e.g. a teammate's local path left over in a shared .env).
     return bool(

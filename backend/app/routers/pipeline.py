@@ -27,8 +27,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["pipeline"])
 
 
+class CaptionSegment(BaseModel):
+    start: float
+    duration: float
+    text: str
+
+
 class ProcessRequest(BaseModel):
     video_id: str
+    segments: list[CaptionSegment] | None = None  # pre-fetched from browser (avoids IP block)
+    source_lang: str = "en"
 
 
 class SummaryRequest(BaseModel):
@@ -59,15 +67,24 @@ async def process_video(request: ProcessRequest):
         return result
 
     try:
-        # PATH A only: YouTube captions (youtube_transcript_api).
-        caption_result = fetch_captions(video_id)
-        if not caption_result:
-            raise HTTPException(
-                status_code=422,
-                detail="No captions available for this video.",
-            )
-        source_lang, segments = caption_result
-        logger.info("caption found: %s (%d segments, lang=%s)", video_id, len(segments), source_lang)
+        # Use client-supplied captions if provided (browser-side fetch avoids Railway IP block).
+        if request.segments:
+            source_lang = request.source_lang
+            segments = [
+                Segment(start=s.start, duration=s.duration, text=s.text, source="youtube_captions")
+                for s in request.segments
+            ]
+            logger.info("using client captions: %s (%d segments, lang=%s)", video_id, len(segments), source_lang)
+        else:
+            # PATH A: server-side caption fetch (may be IP-blocked on Railway).
+            caption_result = fetch_captions(video_id)
+            if not caption_result:
+                raise HTTPException(
+                    status_code=422,
+                    detail="No captions available for this video.",
+                )
+            source_lang, segments = caption_result
+            logger.info("caption found: %s (%d segments, lang=%s)", video_id, len(segments), source_lang)
 
         # Translate to Mongolian (batched — few API calls, not one per segment).
         logger.info("translating: %s", video_id)

@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "SightAhead - YouTube Dubbing",
+  "version": "0.1.0",
+  "description": "Dub YouTube videos into Mongolian",
+
+  "permissions": ["activeTab"],
+
+  "host_permissions": [
+    "*://www.youtube.com/*",
+    "*://youtube.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/watch*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

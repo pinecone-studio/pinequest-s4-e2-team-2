@@ -40,15 +40,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Default crop region (fractions of the frame). Exported so a preview can draw
 // the exact same box over the video for visual verification.
 export const DEFAULT_CROP = {
-  top: 0.80,
+  top: 0.8,
   height: 0.22,
   left: 0.15,
-  width: 0.7,
+  width: 0.8,
 };
 
 export function CaptionOCR({
   onText,
-  workers = 3,
+  workers = 1,
   minGapMS = 0,
   lang = "eng",
   cropTop = DEFAULT_CROP.top,

@@ -82,8 +82,9 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
   }, [])
   const mute = useCallback(() => playerRef.current?.mute?.(), [])
   const unMute = useCallback(() => playerRef.current?.unMute?.(), [])
+  const setVolume = useCallback((vol: number) => playerRef.current?.setVolume?.(vol), [])
 
-  return { containerRef, ready, playing, time, duration, playbackRate, play, pause, toggle, seek, mute, unMute }
+  return { containerRef, ready, playing, time, duration, playbackRate, play, pause, toggle, seek, mute, unMute, setVolume }
 }
 
 function styleIframe(iframe?: HTMLIFrameElement) {

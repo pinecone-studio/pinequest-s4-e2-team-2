@@ -326,11 +326,12 @@ export default function DashboardView({
 
   useEffect(() => {
     if (dubMode === "mongolian") {
-      player.mute();
-    } else {
       player.unMute();
+      player.setVolume(10);
+    } else {
+      player.setVolume(100);
     }
-  }, [dubMode, player.mute, player.unMute]);
+  }, [dubMode, player.unMute, player.setVolume]);
 
   // Log the caption-fetch lifecycle for the selected video.
   useEffect(() => {

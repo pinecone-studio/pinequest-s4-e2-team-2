@@ -10,6 +10,7 @@ so the UI can play it like a live dub.
 import base64
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, HTTPException
@@ -103,8 +104,12 @@ async def process_video(request: ProcessRequest):
         # Frontend places segments by index so out-of-order delivery is fine.
         tts_failures = 0
 
+        _bracket_only = re.compile(r"^\s*(\[.*?\]\s*)+$")
+
         def _tts_one(i: int) -> tuple[int, str, str, int]:
             mn_text = translations[i] if i < len(translations) else segments_in[i].text
+            if _bracket_only.match(mn_text):
+                return i, mn_text, "", 0
             try:
                 audio_bytes = synthesize(mn_text, {"gender": request.gender})
                 audio_ms = audio_duration_ms_from_bytes(audio_bytes)

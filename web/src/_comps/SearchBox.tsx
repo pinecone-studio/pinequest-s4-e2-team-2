@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { YouTubeChannelSearchResult, YouTubeSearchResult } from "@/lib/youtube-search";
 import ChannelView from "./youtube-search/ChannelView";
 import SearchForm from "./youtube-search/SearchForm";
@@ -17,6 +17,8 @@ import {
 } from "./youtube-search/utils";
 
 export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => void }) {
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<YouTubeSearchResult[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
@@ -25,6 +27,8 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState("");
   const channelTabs = useChannelTabResults(selectedChannel, activeChannelTab);
+  const searchSurfaceOpen =
+    isSearching || Boolean(error) || results.length > 0 || selectedChannel !== null;
 
   const resultCounts = useMemo(
     () => ({
@@ -43,6 +47,16 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
     channelTabs.reset();
   };
 
+  const dismissSearchSurface = useCallback(() => {
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+    setIsSearching(false);
+    setError("");
+    setResults([]);
+    setSearchedQuery("");
+    setSelectedChannel(null);
+  }, []);
+
   const handleResultSelect = (item: YouTubeSearchResult) => {
     if (isChannelResult(item)) {
       channelTabs.reset();
@@ -56,6 +70,12 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
       return;
     }
 
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+    setError("");
+    setResults([]);
+    setSearchedQuery("");
+    clearChannelState();
     onSubmit(item.url);
   };
 
@@ -66,6 +86,9 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
     const directVideoId = getYouTubeVideoId(trimmed);
 
     if (!trimmed) {
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+      setIsSearching(false);
       setError("Хайх үгээ оруулна уу.");
       setResults([]);
       clearChannelState();
@@ -73,12 +96,20 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
     }
 
     if (directVideoId) {
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
       setError("");
+      setResults([]);
+      setSearchedQuery("");
+      clearChannelState();
       onSubmit(`https://www.youtube.com/watch?v=${directVideoId}`);
       return;
     }
 
     if (trimmed.length < 2) {
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+      setIsSearching(false);
       setError("Хайлт дор хаяж 2 тэмдэгт байна.");
       setResults([]);
       clearChannelState();
@@ -87,9 +118,15 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
 
     setError("");
     setIsSearching(true);
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
 
     try {
-      const nextResults = await fetchYouTubeResults(trimmed);
+      const nextResults = await fetchYouTubeResults(trimmed, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       setResults(nextResults);
       setSearchedQuery(trimmed);
       clearChannelState();
@@ -98,18 +135,48 @@ export default function SearchBox({ onSubmit }: { onSubmit: (url: string) => voi
         setError("Илэрц олдсонгүй. Өөр түлхүүр үгээр хайгаарай.");
       }
     } catch (searchError) {
+      if (controller.signal.aborted) return;
       setResults([]);
       clearChannelState();
       setError(
         searchError instanceof Error ? searchError.message : "YouTube хайлт амжилтгүй боллоо.",
       );
     } finally {
-      setIsSearching(false);
+      if (searchAbortRef.current === controller) {
+        searchAbortRef.current = null;
+      }
+      if (!controller.signal.aborted) {
+        setIsSearching(false);
+      }
     }
   };
 
+  useEffect(() => {
+    if (!searchSurfaceOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Node)) return;
+      if (searchBoxRef.current?.contains(event.target)) return;
+      dismissSearchSurface();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        dismissSearchSurface();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dismissSearchSurface, searchSurfaceOpen]);
+
   return (
-    <div className="w-full max-w-4xl mx-auto px-4">
+    <div ref={searchBoxRef} className="w-full max-w-4xl mx-auto px-4">
       <div className="text-center mb-6 space-y-3">
         <p className="text-muted-foreground text-sm sm:text-base max-w-lg mx-auto">
           YouTube-ээс видео, channel, playlist хайж, монгол хувилбарт бэлтгэх бичлэгээ сонго.

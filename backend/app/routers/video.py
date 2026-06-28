@@ -9,6 +9,7 @@ from app.models.entities import (
     VideoAssetCreate,
     VideoAssetRecord,
     VideoRecord,
+    VideoTranscriptCache,
     VideoUpsert,
     WatchHistoryRecord,
     WatchHistoryUpdate,
@@ -76,6 +77,38 @@ def list_watch_history(
 ) -> list[WatchHistoryRecord]:
     try:
         return cache_service.list_watch_history(current_user.id, limit=limit)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
+
+
+@router.get("/{video_id}/transcript", response_model=VideoTranscriptCache)
+def read_video_transcript(
+    video_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> VideoTranscriptCache:
+    try:
+        transcript = cache_service.get_video_transcript(video_id)
+    except Exception as exc:
+        raise _service_unavailable(exc) from exc
+
+    if not transcript:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript not cached.")
+    return transcript
+
+
+@router.put("/{video_id}/transcript", response_model=VideoTranscriptCache)
+def save_video_transcript(
+    video_id: str,
+    payload: VideoTranscriptCache,
+    current_user: UserProfile = Depends(get_current_user),
+) -> VideoTranscriptCache:
+    if payload.video_id != video_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Path video_id must match request body video_id.",
+        )
+    try:
+        return cache_service.save_video_transcript(payload)
     except Exception as exc:
         raise _service_unavailable(exc) from exc
 

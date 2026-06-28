@@ -72,6 +72,19 @@ export type ProcessResult = {
   segments: Segment[];
 };
 
+export type CachedTranscriptSegment = {
+  start: number;
+  duration: number;
+  text: string;
+  translated_text?: string | null;
+};
+
+export type CachedVideoTranscript = {
+  video_id: string;
+  source_lang: string;
+  segments: CachedTranscriptSegment[];
+};
+
 export type AssistantMode = "help" | "current_segment" | "summary" | "question";
 
 export type AssistantSegmentPayload = {
@@ -144,6 +157,26 @@ export function recordWatchHistory(
   payload: VideoHistoryPayload,
 ): Promise<VideoHistoryRecord> {
   return apifetch<VideoHistoryRecord>("/videos/history", { method: "POST", data: payload });
+}
+
+export function fetchCachedVideoTranscript(
+  videoId: string,
+  signal?: AbortSignal,
+): Promise<CachedVideoTranscript> {
+  return apifetch<CachedVideoTranscript>(`/videos/${videoId}/transcript`, {
+    signal,
+  });
+}
+
+export function saveCachedVideoTranscript(
+  payload: CachedVideoTranscript,
+  signal?: AbortSignal,
+): Promise<CachedVideoTranscript> {
+  return apifetch<CachedVideoTranscript>(`/videos/${payload.video_id}/transcript`, {
+    method: "PUT",
+    data: payload,
+    signal,
+  });
 }
 
 // ===== Notes =====

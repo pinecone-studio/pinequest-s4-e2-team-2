@@ -18,7 +18,9 @@ from app.models.entities import (
     SummaryCreate,
     SummaryRecord,
     SummarySearchResult,
+    TranscriptSegmentRecord,
     UserProfile,
+    VideoTranscriptCache,
     VideoAssetCreate,
     VideoAssetRecord,
     VideoRecord,
@@ -377,6 +379,79 @@ def list_watch_history(user_id: str, limit: int = 30) -> list[WatchHistoryRecord
         records.append(WatchHistoryRecord(**data))
 
     return sorted(records, key=lambda item: item.last_watched_at, reverse=True)[:limit]
+
+
+def _normalize_transcript_segment(data: Any) -> dict[str, Any] | None:
+    if isinstance(data, BaseModel):
+        data = _dump(data)
+    if not isinstance(data, dict):
+        return None
+
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return None
+
+    return {
+        "start": float(data.get("start") or 0),
+        "duration": float(data.get("duration") or 0),
+        "text": text,
+        "source": data.get("source") or "youtube_captions",
+        "translated_text": data.get("translated_text"),
+    }
+
+
+def _normalize_transcript_segments(segments: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for segment in segments:
+        normalized_segment = _normalize_transcript_segment(segment)
+        if normalized_segment:
+            normalized.append(normalized_segment)
+    return normalized
+
+
+def get_video_transcript(video_id: str) -> VideoTranscriptCache | None:
+    cached = get_cached_video(video_id)
+    if not cached:
+        return None
+
+    segments = _normalize_transcript_segments(cached.get("segments") or [])
+    if not segments:
+        return None
+
+    return VideoTranscriptCache(
+        video_id=video_id,
+        source_lang=cached.get("source_lang") or cached.get("language_code") or "en",
+        segments=[TranscriptSegmentRecord(**segment) for segment in segments],
+    )
+
+
+def save_video_transcript(payload: VideoTranscriptCache) -> VideoTranscriptCache:
+    current = get_cached_video(payload.video_id) or {}
+    incoming = _normalize_transcript_segments([_dump(segment) for segment in payload.segments])
+    existing = _normalize_transcript_segments(current.get("segments") or [])
+
+    merged: list[dict[str, Any]] = []
+    for index, segment in enumerate(incoming):
+        existing_segment = existing[index] if index < len(existing) else None
+        if existing_segment and not segment.get("translated_text"):
+            segment["translated_text"] = existing_segment.get("translated_text")
+        merged.append(segment)
+
+    cache_video(
+        payload.video_id,
+        {
+            **current,
+            "video_id": payload.video_id,
+            "source_lang": payload.source_lang,
+            "segments": merged,
+        },
+    )
+
+    return VideoTranscriptCache(
+        video_id=payload.video_id,
+        source_lang=payload.source_lang,
+        segments=[TranscriptSegmentRecord(**segment) for segment in merged],
+    )
 
 
 def create_note(user_id: str, payload: NoteCreate) -> NoteRecord:

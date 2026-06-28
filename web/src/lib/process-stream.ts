@@ -32,11 +32,17 @@ function backendUrl(path: string): string {
 }
 
 // Fetches the transcript from our own Vercel API route (same-origin, no CORS).
-export async function fetchTranscript(videoId: string): Promise<TranscriptResponse> {
+export async function fetchTranscript(
+  videoId: string,
+  signal?: AbortSignal,
+): Promise<TranscriptResponse> {
   console.log("[fetchTranscript] → requesting transcript", { videoId });
   const startedAt = Date.now();
 
-  const res = await fetch(`/api/youtube/transcript?videoId=${encodeURIComponent(videoId)}`);
+  const res = await fetch(
+    `/api/youtube/transcript?videoId=${encodeURIComponent(videoId)}`,
+    { signal },
+  );
 
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as

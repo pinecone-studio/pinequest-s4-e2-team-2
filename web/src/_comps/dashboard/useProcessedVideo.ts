@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Segment } from "@/lib/backend-api";
+import { saveCachedVideoTranscript, type Segment } from "@/lib/backend-api";
 import { fetchTranscript } from "@/lib/process-stream";
 
 // Loads the caption transcript for the selected video and exposes it as Segment[].
@@ -55,6 +55,13 @@ export function useProcessedVideo(videoId: string) {
 
         setSegments(mapped);
         setLoading(false);
+        void saveCachedVideoTranscript({
+          video_id: videoId,
+          source_lang: transcript.source_lang,
+          segments: transcript.segments,
+        }).catch((saveError) => {
+          console.warn("Transcript cache save failed:", saveError);
+        });
         console.log(`[useProcessedVideo] loaded ${mapped.length} caption segments`);
       } catch (err) {
         if (!active) return;

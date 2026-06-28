@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 import type { Note } from "./data"
-import { PENCIL } from "./cursors"
 import { NoteEditor } from "./NoteEditor"
 import { NoteList } from "./NoteList"
 import { NotesHeader } from "./NotesHeader"
@@ -38,7 +37,6 @@ export function NotesPane({
       onPointerUp={() => setIsPressing(false)}
       onPointerCancel={() => setIsPressing(false)}
       onPointerLeave={() => setIsPressing(false)}
-      style={{ cursor: PENCIL }}
     >
       <div className="dashboard-paper" />
       <div className="dashboard-paper-light" />

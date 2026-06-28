@@ -12,9 +12,14 @@ export function NotesHeader({ count, onOpenAssistant, onCollapse }: NotesHeaderP
   return (
     <div className="dashboard-notes-header">
       <div className="dashboard-notes-title-row">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 13 }}>
-          <span className="dashboard-notes-title">Notes</span>
-          <span className="dashboard-notes-count">{count} moments</span>
+        <div className="dashboard-notes-title-brand">
+          <span className="dashboard-notes-avatar" aria-hidden="true">
+            <NotebookPen size={18} />
+          </span>
+          <div>
+            <span className="dashboard-notes-title">Notes</span>
+            <span className="dashboard-notes-count">{count} moments</span>
+          </div>
         </div>
         <div className="dashboard-notes-actions">
           <div className="dashboard-panel-toggle" aria-label="Right panel view">

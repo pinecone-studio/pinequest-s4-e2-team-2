@@ -167,6 +167,23 @@ function toSearchResult(item: SearchItem): YouTubeSearchResult | null {
   return toVideoResult(item as SearchVideo, "video");
 }
 
+function getTypedResults(
+  data: Awaited<ReturnType<YouTubeSearch>>,
+  type: SearchResultType,
+) {
+  if (type === "playlist") return data.playlists ?? [];
+  if (type === "channel") return data.channels ?? [];
+  if (type === "video") return data.videos ?? [];
+
+  return [
+    ...(data.all ?? []),
+    ...(data.channels ?? []),
+    ...(data.videos ?? []),
+    ...(data.live ?? []),
+    ...(data.playlists ?? []),
+  ];
+}
+
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim();
   const type = getSearchType(request.nextUrl.searchParams.get("type"));
@@ -187,26 +204,31 @@ export async function GET(request: NextRequest) {
       pages,
       ...(TYPE_FILTERS[type] ? { sp: TYPE_FILTERS[type] } : {}),
     });
+    const enrichedData =
+      type === "all"
+        ? await Promise.allSettled([
+            yts({ query, pages: 1, sp: TYPE_FILTERS.channel }),
+            yts({ query, pages: 1, sp: TYPE_FILTERS.playlist }),
+          ])
+        : [];
 
-    const orderedResults =
-      type === "playlist"
-        ? data.playlists ?? []
-        : type === "channel"
-          ? data.channels ?? []
-          : type === "video"
-            ? data.videos ?? []
-            : data.all ?? [
-                ...(data.channels ?? []),
-                ...(data.videos ?? []),
-                ...(data.live ?? []),
-                ...(data.playlists ?? []),
-              ];
+    const orderedResults = [
+      ...getTypedResults(data, type),
+      ...enrichedData.flatMap((result, index) => {
+        if (result.status !== "fulfilled") return [];
+        return getTypedResults(result.value, index === 0 ? "channel" : "playlist");
+      }),
+    ];
+    const results = orderedResults
+      .map(toSearchResult)
+      .filter((item): item is YouTubeSearchResult => Boolean(item));
+    const uniqueResults = Array.from(
+      new Map(results.map((item) => [`${item.kind}-${item.id}`, item])).values(),
+    );
 
     return Response.json(
       {
-        results: orderedResults
-          .map(toSearchResult)
-          .filter((item): item is YouTubeSearchResult => Boolean(item)),
+        results: uniqueResults,
       } satisfies YouTubeSearchResponse,
     );
   } catch (error) {

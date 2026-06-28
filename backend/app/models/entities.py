@@ -53,6 +53,19 @@ class VideoRecord(VideoUpsert):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class TranscriptSegmentRecord(BaseModel):
+    start: float = 0.0
+    duration: float = 0.0
+    text: str = Field(min_length=1)
+    translated_text: str | None = None
+
+
+class VideoTranscriptCache(BaseModel):
+    video_id: str = Field(min_length=6, max_length=32)
+    source_lang: str = Field(default="en", min_length=2, max_length=12)
+    segments: list[TranscriptSegmentRecord]
+
+
 class WatchHistoryUpdate(BaseModel):
     video_id: str
     last_position_ms: int = Field(default=0, ge=0)

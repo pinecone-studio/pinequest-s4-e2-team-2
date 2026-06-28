@@ -157,8 +157,9 @@ async def process_video(request: ProcessRequest):
 
         if request.video_id:
             try:
-                cache_video(request.video_id, {"segments": [
+                cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
                     {"start": s.start, "duration": s.duration, "text": s.text,
+                     "source": "youtube_captions",
                      "translated_text": translations[i] if i < len(translations) else s.text}
                     for i, s in enumerate(segments_in)
                 ]})
@@ -218,9 +219,11 @@ async def dub_video(request: DubRequest):
 
     if request.video_id:
         try:
-            cache_video(request.video_id, {"segments": [
+            cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
                 {"start": s["start"], "duration": s["duration"],
-                 "text": s["text"], "translated_text": s["translated_text"]}
+                 "text": s["text"],
+                 "source": "youtube_captions",
+                 "translated_text": s["translated_text"]}
                 for s in translated_segments
             ]})
         except Exception:

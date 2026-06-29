@@ -775,6 +775,7 @@ export default function DashboardView({
         />
         {assistantOpen ? (
           <AssistantChat
+            historyItems={visibleHistoryItems}
             open={assistantOpen}
             videoId={videoId}
             currentTime={player.time}

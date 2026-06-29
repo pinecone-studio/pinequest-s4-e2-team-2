@@ -292,7 +292,8 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
-  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender, player.playbackRate);
+  // CHANGED: pass `player.playing` so the cached dub pauses/resumes with the video.
+  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender, player.playbackRate, player.playing);
   // Fetches captions for the selected video (Path A, client-side) and exposes
   // them as `processedSegments` for the SubtitlePane to render.
   const {
@@ -384,14 +385,14 @@ export default function DashboardView({
     playbackRef.current = { time: player.time, duration: player.duration };
   }, [player.duration, player.time]);
 
+  // Duck (not mute) the original YouTube audio while the Mongolian dub overlaps
+  // it, like dubbed content. Re-applies on player ready + video switch, since a
+  // freshly (re)created player resets to full volume.
   useEffect(() => {
-    if (dubMode === "mongolian") {
-      player.unMute();
-      player.setVolume(10);
-    } else {
-      player.setVolume(100);
-    }
-  }, [dubMode, player.unMute, player.setVolume]);
+    if (!player.ready) return;
+    player.unMute();
+    player.setVolume(dubMode === "mongolian" ? 12 : 100);
+  }, [dubMode, player.ready, videoId, player.unMute, player.setVolume]);
 
   // Log the caption-fetch lifecycle for the selected video.
   useEffect(() => {

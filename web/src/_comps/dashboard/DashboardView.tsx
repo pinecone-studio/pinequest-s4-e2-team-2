@@ -47,6 +47,7 @@ import type {
   YouTubeVideoSearchResult,
 } from "@/lib/youtube-search";
 import { useProcessedVideo } from "./useProcessedVideo";
+import { useTranslatedSubtitles } from "./useTranslatedSubtitles";
 import { toast } from "@/_comps/ui/Sonner";
 
 export type DashboardVideoSelection = {
@@ -298,7 +299,15 @@ export default function DashboardView({
     segments: processedSegments,
     loading: processingLoading,
     error: processingError,
+    sourceLang,
   } = useProcessedVideo(videoId);
+  // Translate the fetched captions (no TTS) so subtitles show Mongolian by
+  // default; audio dubbing remains handled by useDubAudio when toggled on.
+  const translatedSubs = useTranslatedSubtitles(
+    videoId,
+    processedSegments,
+    sourceLang,
+  );
   const recommendationSearchQuery = useMemo(
     () => recommendationQuery(activeItem),
     [activeItem],
@@ -752,11 +761,13 @@ export default function DashboardView({
                 segments={
                   dubMode === "mongolian" && dub.translatedSegments.length > 0
                     ? dub.translatedSegments
-                    : processedSegments
+                    : translatedSubs.segments.length > 0
+                      ? translatedSubs.segments
+                      : processedSegments
                 }
                 currentTime={player.time}
-                loading={processingLoading}
-                error={processingError}
+                loading={processingLoading || translatedSubs.loading}
+                error={processingError || translatedSubs.error}
               />
             ) : null
           }

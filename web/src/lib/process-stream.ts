@@ -72,7 +72,12 @@ export async function fetchTranscript(
 // POSTs the segments to the backend and consumes the SSE stream, invoking
 // handlers as each translated + dubbed segment arrives.
 export async function streamProcess(
-  payload: { source_lang: string; segments: TranscriptSegment[]; gender?: string },
+  payload: {
+    source_lang: string;
+    segments: TranscriptSegment[];
+    gender?: string;
+    tts?: boolean; // false = translate-only (subtitles), no audio synthesis
+  },
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

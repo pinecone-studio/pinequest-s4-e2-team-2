@@ -41,6 +41,9 @@ class ProcessRequest(BaseModel):
     source_lang: str = "en"
     segments: list[SegmentInput] = []
     gender: str = "female"
+    # When False, translate only (no TTS) — used to populate translated subtitles
+    # without paying for audio synthesis. Dub mode sends tts=True.
+    tts: bool = True
 
 
 class SummaryRequest(BaseModel):
@@ -98,6 +101,39 @@ async def process_video(request: ProcessRequest):
                 total,
             )
             yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
+            return
+
+        # Translate-only fast path (subtitles): stream the translated text with no
+        # audio, then finish. Avoids the cost/latency of TTS when no dub is needed.
+        if not request.tts:
+            for i, seg in enumerate(segments_in):
+                mn_text = translations[i] if i < len(translations) else seg.text
+                yield _sse(
+                    {
+                        "index": i,
+                        "total": total,
+                        "segment": {
+                            "offset": seg.start,
+                            "duration": seg.duration,
+                            "text": seg.text,
+                            "translated_text": mn_text,
+                            "audio_b64": "",
+                            "audio_ms": 0,
+                        },
+                    }
+                )
+            if request.video_id:
+                try:
+                    cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
+                        {"start": s.start, "duration": s.duration, "text": s.text,
+                         "source": "youtube_captions",
+                         "translated_text": translations[i] if i < len(translations) else s.text}
+                        for i, s in enumerate(segments_in)
+                    ]})
+                except Exception:
+                    logger.warning("/process cache_video failed (non-fatal)", exc_info=True)
+            logger.info("/process → done (translate-only): %d segments (video_id=%s)", total, request.video_id)
+            yield _sse({"done": True, "total": total})
             return
 
         # 2. TTS in parallel — all segments at once, stream each as it finishes.

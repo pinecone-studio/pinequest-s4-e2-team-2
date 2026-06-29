@@ -10,6 +10,7 @@ export function useProcessedVideo(videoId: string) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sourceLang, setSourceLang] = useState("en");
 
   useEffect(() => {
     if (!videoId) {
@@ -54,6 +55,7 @@ export function useProcessedVideo(videoId: string) {
         }));
 
         setSegments(mapped);
+        setSourceLang(transcript.source_lang || "en");
         setLoading(false);
         void saveCachedVideoTranscript({
           video_id: videoId,
@@ -75,5 +77,5 @@ export function useProcessedVideo(videoId: string) {
     };
   }, [videoId]);
 
-  return { segments, loading, error };
+  return { segments, loading, error, sourceLang };
 }

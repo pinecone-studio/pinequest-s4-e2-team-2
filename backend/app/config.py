@@ -60,3 +60,14 @@ AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "eastus")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 AUDIO_DIR = os.getenv("AUDIO_DIR", "audio")
 CACHE_DIR = os.getenv("CACHE_DIR", "cache")
+
+# --- Async F5 dub pipeline (jobs → Modal GPU) ---
+# RapidAPI transcript (scraped on RapidAPI's infra, so no YouTube IP-block).
+RAPID_API_URL = os.getenv("RAPID_API_URL", "")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+# Deployed Modal app/class that runs F5 (see gpu/f5_modal.py).
+MODAL_F5_APP = os.getenv("MODAL_F5_APP", "sightahead-f5")
+MODAL_F5_CLASS = os.getenv("MODAL_F5_CLASS", "F5")
+# Cost guardrails — reject runaway inputs before spending GPU time.
+MAX_DUB_SEGMENTS = int(os.getenv("MAX_DUB_SEGMENTS", "1500"))
+MAX_TRANSCRIPT_CHARS = int(os.getenv("MAX_TRANSCRIPT_CHARS", "60000"))

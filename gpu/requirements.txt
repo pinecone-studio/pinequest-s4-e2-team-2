@@ -1,0 +1,4 @@
+# Local tooling only — needed to deploy/run the Modal app from your machine.
+# The GPU container's own deps (torch, f5-tts, soundfile) are defined in the
+# Modal Image inside f5_modal.py, NOT installed locally.
+modal

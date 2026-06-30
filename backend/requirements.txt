@@ -15,6 +15,9 @@ google-generativeai
 httpx
 mutagen
 
+# GPU dub: call the Modal F5 app (gpu/f5_modal.py) via the SDK
+modal
+
 # Audio (duration only — pydub/azure SDK not used; TTS calls Azure REST via httpx)
 mutagen
 

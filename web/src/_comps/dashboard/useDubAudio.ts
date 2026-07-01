@@ -16,6 +16,9 @@ type DubSegment = {
 
 const MAX_OVERLAPPING_DUB_AUDIO = 2
 
+// Azure TTS streaming dub. Fetches the transcript, sends it to the backend
+// /process pipeline (translate + TTS), and plays each segment's audio synced
+// to the video. Supports pause/resume and volume control.
 export function useDubAudio(
   videoId: string,
   currentTime: number,
@@ -32,7 +35,6 @@ export function useDubAudio(
 
   const activeAudiosRef = useRef<Map<number, HTMLAudioElement>>(new Map())
   const lastStartedIdxRef = useRef<number>(-1)
-  const lastPlaybackTimeRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   const blobUrlsRef = useRef<string[]>([])
   const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,42 +74,28 @@ export function useDubAudio(
       if (flushRef.current) clearTimeout(flushRef.current)
       stopAllAudio()
       abortRef.current?.abort()
-      blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [stopAllAudio])
+  }, [])
 
   // Fetch transcript + stream translate/TTS when enabled or voice changes
   useEffect(() => {
     if (!videoId || !enabled) return
 
-    let active = true
-    const controller = new AbortController()
-
     stopAllAudio()
     lastStartedIdxRef.current = -1
-    lastPlaybackTimeRef.current = 0
     abortRef.current?.abort()
+    setSegments([])
+    setError(null)
+    setStep("fetching")
+    setProgress(null)
+
+    const controller = new AbortController()
     abortRef.current = controller
-    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
-    blobUrlsRef.current = []
-    queueMicrotask(() => {
-      if (!active || controller.signal.aborted) return
-      setSegments([])
-      setError(null)
-      setProgress(null)
-      setStep("fetching")
-    })
 
     void (async () => {
       try {
-        const transcript = await fetchTranscript(videoId)
+        const transcript = await fetchTranscript(videoId, controller.signal)
         if (controller.signal.aborted) return
-
-        if (!transcript.segments.length) {
-          setError("No transcript available for this video.")
-          setStep("error")
-          return
-        }
 
         const total = transcript.segments.length
         const built: DubSegment[] = []
@@ -170,44 +158,33 @@ export function useDubAudio(
         )
       } catch (err) {
         if (controller.signal.aborted) return
-        setError(err instanceof Error ? err.message : "Dub beldehed aldaa garlaa.")
+        setError(err instanceof Error ? err.message : "Дуб бэлдэхэд алдаа гарлаа")
         setStep("error")
         setProgress(null)
       }
     })()
 
     return () => {
-      active = false
       controller.abort()
       if (abortRef.current === controller) abortRef.current = null
       if (flushRef.current) clearTimeout(flushRef.current)
     }
   }, [videoId, enabled, voiceId, stopAllAudio])
 
-  // Clear everything when dub mode is turned off
+  // Pause (but DON'T discard) the dub when the user switches back to the original
+  // audio, so re-enabling plays instantly from the already-built segments. The
+  // background build is left running/complete and its blobs are kept alive.
   useEffect(() => {
     if (enabled) return
-    let active = true
-    abortRef.current?.abort()
-    abortRef.current = null
     stopAllAudio()
     lastStartedIdxRef.current = -1
-    lastPlaybackTimeRef.current = 0
-    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
-    blobUrlsRef.current = []
-    queueMicrotask(() => {
-      if (!active) return
-      setSegments([])
-      setError(null)
-      setProgress(null)
-      setStep("idle")
-    })
-    return () => {
-      active = false
-    }
+    setSegments([])
+    setError(null)
+    setProgress(null)
+    setStep("idle")
   }, [enabled, stopAllAudio])
 
-  // Apply playback rate and volume changes to currently playing audio
+  // Apply playback rate changes to currently playing audio
   useEffect(() => {
     activeAudiosRef.current.forEach((audio) => {
       audio.playbackRate = playbackRate
@@ -235,18 +212,9 @@ export function useDubAudio(
   useEffect(() => {
     if (!enabled || !playing || segments.length === 0) return
 
-    const jumped = Math.abs(currentTime - lastPlaybackTimeRef.current) > 1.5
-    if (jumped) {
-      stopAllAudio()
-      lastStartedIdxRef.current = -1
-    }
-    lastPlaybackTimeRef.current = currentTime
-
     const idx = segments.findIndex(
       (s) => currentTime >= s.start && currentTime < s.start + s.duration,
     )
-
-    // Between subtitle windows: let current audio finish, don't interrupt.
     if (idx === -1) return
 
     // Same segment already started for this playback pass; do not restart it.
@@ -275,7 +243,7 @@ export function useDubAudio(
     audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e))
   }, [currentTime, segments, enabled, playing, playbackRate, volume, pruneOverlappingAudio, stopAllAudio])
 
-  // Build translated segments for SubtitlePane when dub mode is active
+  // Translated lines for SubtitlePane (available as soon as translation lands).
   const translatedSegments: Segment[] = segments
     .filter((s) => s.translatedText !== null)
     .map((s) => ({
@@ -289,5 +257,6 @@ export function useDubAudio(
       audio_b64: null,
     }))
 
-  return { step, error, progress, segmentCount: segments.length, translatedSegments }
+  const audioSegments: { start: number; duration: number; ready: boolean }[] = []
+  return { step, error, progress, segmentCount: segments.length, translatedSegments, audioSegments }
 }

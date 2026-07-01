@@ -16,7 +16,7 @@ export function useTranslatedSubtitles(
   videoId: string,
   sourceSegments: Segment[],
   sourceLang: string = "en",
-  translationVersion: string | null = null,
+  enabled: boolean = true,
 ) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,61 +24,39 @@ export function useTranslatedSubtitles(
   const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!videoId || sourceSegments.length === 0) {
-      queueMicrotask(() => {
-        setSegments([]);
-        setLoading(false);
-        setError("");
-      });
+    // When dub mode is on, useDubAudio (F5 /jobs) provides the translated
+    // subtitles, so this Azure /process translate-only path stays idle.
+    if (!enabled || !videoId || sourceSegments.length === 0) {
+      setSegments([]);
+      setLoading(false);
+      setError("");
       return;
     }
 
     let active = true;
     const controller = new AbortController();
-    const canReuseTranslatedText = translationVersion === TRANSLATION_CACHE_VERSION;
-    const cachedSegments: Segment[] = canReuseTranslatedText
-      ? sourceSegments
-          .filter((segment) => segment.translated_text?.trim())
-          .map((segment) => ({
-            start: segment.start,
-            duration: segment.duration,
-            text: segment.text,
-            source: "youtube_captions",
-            translated_text: segment.translated_text,
-            audio_path: null,
-            audio_ms: null,
-            audio_b64: null,
-          }))
-      : [];
+    setSegments([]);
+    setError("");
+    setLoading(true);
 
-    if (cachedSegments.length > 0 && cachedSegments.length === sourceSegments.length) {
-      queueMicrotask(() => {
-        if (!active) return;
-        setSegments(cachedSegments);
-        setError("");
-        setLoading(false);
-      });
-      return () => {
-        active = false;
-        controller.abort();
-      };
-    }
-
-    queueMicrotask(() => {
-      if (!active) return;
-      setSegments([]);
-      setError("");
-      setLoading(true);
-    });
-
-    const built: Segment[] = [];
-    const payload: TranscriptSegment[] = sourceSegments.map((segment) => ({
-      start: segment.start,
-      duration: segment.duration,
-      text: segment.text,
+    // Pre-build the result array so translations can be placed by index as the
+    // SSE stream delivers them (out-of-order delivery is fine).
+    const built: Segment[] = sourceSegments.map((s) => ({
+      start: s.start,
+      duration: s.duration,
+      text: s.text,
+      source: "youtube_captions",
+      translated_text: null,
+      audio_path: null,
+      audio_ms: null,
+      audio_b64: null,
     }));
 
-    const sortedBuilt = () => built.filter(Boolean).sort((a, b) => a.start - b.start);
+    const payload: TranscriptSegment[] = sourceSegments.map((s) => ({
+      start: s.start,
+      duration: s.duration,
+      text: s.text,
+    }));
 
     // Debounced flush: first segment fires immediately, subsequent ones batch at 80ms.
     const scheduleFlush = (snapshot: Segment[], immediate: boolean) => {
@@ -91,6 +69,7 @@ export function useTranslatedSubtitles(
     };
 
     let received = 0;
+    const sortedBuilt = () => [...built].filter(Boolean).sort((a, b) => a.start - b.start);
 
     void streamProcess(
       { video_id: videoId, source_lang: sourceLang, segments: payload, tts: false },
@@ -149,7 +128,7 @@ export function useTranslatedSubtitles(
       controller.abort();
       if (flushRef.current) clearTimeout(flushRef.current);
     };
-  }, [videoId, sourceSegments, sourceLang, translationVersion]);
+  }, [videoId, sourceSegments, sourceLang, enabled]);
 
   return { segments, loading, error };
 }

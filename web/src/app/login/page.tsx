@@ -11,9 +11,11 @@ import { Input } from "@/_comps/ui/Input";
 import { Label } from "@/_comps/ui/Label";
 import { signInWithGoogleAndSync } from "@/lib/google-auth";
 import { loginAsDemo, loginWithEmail } from "@/lib/auth";
+import { useUI } from "@/_comps/providers/UIprovider";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { setAllowAccess } = useUI();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -52,6 +54,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await loginAsDemo();
+      // Demo unlock: grant access to the paid (notes/summary/AI) tabs.
+      setAllowAccess(true);
       router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Туршилтаар нэвтрэхэд алдаа гарлаа.");

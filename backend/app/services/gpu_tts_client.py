@@ -30,6 +30,7 @@ def spawn_synthesis(
     segments: list[dict],
     ref_audio_b64: str | None = None,
     ref_text: str = "",
+    voice: str | None = None,
 ) -> str:
     """Kick off synthesis for a chunk. Returns a call id to poll with get_result().
 

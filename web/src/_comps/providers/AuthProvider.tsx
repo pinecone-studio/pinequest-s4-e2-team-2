@@ -5,18 +5,20 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 
 import { logout as firebaseLogout } from "@/lib/auth";
 import { firebaseAuth } from "@/lib/firebase";
-
+//need to check if user is paid from the database, so implement it later.
 type AuthContextType = {
   user: User | null;
   // Firebase эхний auth төлвийг тодорхойлох хүртэлх ачааллын үе.
   loading: boolean;
   logout: () => Promise<void>;
+  paid: boolean;
 };
 
 const AuthContext = React.createContext<AuthContextType>({
   user: null,
   loading: true,
   logout: async () => {},
+  paid: false,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -36,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout }}>
+    <AuthContext.Provider value={{ user, loading, logout, paid: false }}>
       {children}
     </AuthContext.Provider>
   );

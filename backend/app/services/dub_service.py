@@ -18,6 +18,27 @@ from app.services.translator import translate_timed
 
 logger = logging.getLogger(__name__)
 
+# Segments per GPU call. Smaller = first audio arrives sooner (more chunks);
+# Modal may run chunks on parallel containers.
+_CHUNK_SIZE = 8
+# The FIRST chunk is tiny so the very first audio is playable ASAP; the rest use
+# the larger _CHUNK_SIZE for efficiency.
+_FIRST_CHUNK_SIZE = 3
+
+
+def _chunk_ranges(n: int) -> list[tuple[int, int]]:
+    """(start, end) ranges: a small first chunk, then _CHUNK_SIZE chunks."""
+    if n <= 0:
+        return []
+    ranges: list[tuple[int, int]] = []
+    first = min(_FIRST_CHUNK_SIZE, n)
+    ranges.append((0, first))
+    i = first
+    while i < n:
+        ranges.append((i, min(i + _CHUNK_SIZE, n)))
+        i += _CHUNK_SIZE
+    return ranges
+
 
 class DubError(Exception):
     """Raised for client-facing failures (bad input, guardrail hit)."""
@@ -75,12 +96,19 @@ def start_dub(
         for i, s in enumerate(segments)
     ]
 
-    # 6. Spawn GPU synthesis in the background. (async rule)
-    call_id = gpu_tts_client.spawn_synthesis(
-        [{"index": d.index, "text": d.translated_text or ""} for d in dub_segments],
-        ref_audio_b64=ref_audio_b64,
-        ref_text=ref_text,
-    )
+    # 6. Spawn GPU synthesis in CHUNKS so audio arrives incrementally — the first
+    #    chunk's audio is playable while later chunks are still synthesizing (and
+    #    Modal can run chunks in parallel containers). (async rule)
+    calls: list[dict] = []
+    for start_i, end_i in _chunk_ranges(len(dub_segments)):
+        chunk = dub_segments[start_i:end_i]
+        call_id = gpu_tts_client.spawn_synthesis(
+            [{"index": d.index, "text": d.translated_text or ""} for d in chunk],
+            ref_audio_b64=ref_audio_b64,
+            ref_text=ref_text,
+            voice=voice_ref,
+        )
+        calls.append({"call_id": call_id, "indices": [d.index for d in chunk], "done": False})
 
     # 7. Persist the job and return immediately.
     job = job_service.create_job(
@@ -90,42 +118,51 @@ def start_dub(
             target_lang=target_lang,
             voice_ref=voice_ref,
             status=DubStatus.PROCESSING,
-            call_id=call_id,
+            calls=calls,
             segments=dub_segments,
         )
     )
-    logger.info("dub started: job=%s segments=%d", job.id, len(dub_segments))
+    logger.info("dub started: job=%s segments=%d chunks=%d", job.id, len(dub_segments), len(calls))
     return job
 
 
 def poll_dub(job: DubJob) -> DubJob:
-    """Advance a job: if the GPU finished, store audio + mark done. Idempotent."""
-    if job.status in (DubStatus.DONE, DubStatus.FAILED):
+    """Advance a job incrementally: for every finished chunk, store its audio and
+    fill those segments' URLs. Done when all chunks complete. Idempotent."""
+    if job.status in (DubStatus.DONE, DubStatus.FAILED) or not job.calls:
         return job
-    if not job.call_id:
-        return job
 
-    try:
-        result = gpu_tts_client.get_result(job.call_id)
-    except Exception as exc:  # noqa: BLE001 — GPU/Modal failure
-        logger.exception("dub GPU call failed: job=%s", job.id)
-        job.status = DubStatus.FAILED
-        job.error = f"{type(exc).__name__}: {exc}"
-        return job_service.update_job(job)
+    by_index = {seg.index: seg for seg in job.segments}
+    changed = False
 
-    if result is None:
-        return job  # still running — poll again later
+    for call in job.calls:
+        if call.get("done"):
+            continue
+        try:
+            result = gpu_tts_client.get_result(call["call_id"])
+        except Exception as exc:  # noqa: BLE001 — one chunk's GPU call failed
+            logger.exception("dub chunk failed: job=%s call=%s", job.id, call.get("call_id"))
+            call["done"] = True
+            call["error"] = f"{type(exc).__name__}: {exc}"
+            changed = True
+            continue
+        if result is None:
+            continue  # this chunk is still synthesizing
 
-    # GPU done → upload each segment's audio, fill URLs.
-    by_index = {r["index"]: r for r in result}
-    for seg in job.segments:
-        r = by_index.get(seg.index)
-        if r and r.get("audio_b64"):
-            audio_bytes = base64.b64decode(r["audio_b64"])
-            seg.audio_url = storage_service.store_audio(job.cache_key, seg.index, audio_bytes)
-            seg.audio_ms = r.get("audio_ms") or 0
+        for r in result:
+            seg = by_index.get(r["index"])
+            if seg and r.get("audio_b64"):
+                audio_bytes = base64.b64decode(r["audio_b64"])
+                seg.audio_url = storage_service.store_audio(job.cache_key, seg.index, audio_bytes)
+                seg.audio_ms = r.get("audio_ms") or 0
+        call["done"] = True
+        changed = True
 
-    job.status = DubStatus.DONE
-    job.progress = 100
-    logger.info("dub done: job=%s", job.id)
-    return job_service.update_job(job)
+    filled = sum(1 for seg in job.segments if seg.audio_url)
+    job.progress = int(filled / max(1, len(job.segments)) * 100)
+    if all(call.get("done") for call in job.calls):
+        job.status = DubStatus.DONE
+        job.progress = 100
+        logger.info("dub done: job=%s (%d/%d segments)", job.id, filled, len(job.segments))
+
+    return job_service.update_job(job) if changed or job.status == DubStatus.DONE else job

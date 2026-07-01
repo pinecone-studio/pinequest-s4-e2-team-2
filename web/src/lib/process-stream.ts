@@ -13,6 +13,56 @@ export type TranscriptResponse = {
   segments: TranscriptSegment[];
 };
 
+// Raw YouTube captions arrive as tiny fragments ("In that", "context, we have")
+// that lose meaning when translated/dubbed one-by-one. Merge consecutive
+// fragments into whole sentences so translation + TTS get full context. A group
+// closes on sentence-ending punctuation, a long pause, or a safety length cap
+// (auto-captions sometimes carry no punctuation at all).
+export function groupIntoSentences(
+  segments: TranscriptSegment[],
+): TranscriptSegment[] {
+  const MAX_CHARS = 240; // cap when captions lack punctuation
+  const MAX_GAP = 2.0; // seconds of silence that also ends a sentence
+  const ENDS_SENTENCE = /[.!?…]['")\]]*$/;
+
+  const grouped: TranscriptSegment[] = [];
+  let buf: { start: number; end: number; text: string } | null = null;
+
+  const flush = () => {
+    if (!buf) return;
+    const text = buf.text.replace(/\s+/g, " ").trim();
+    if (text) {
+      grouped.push({
+        start: buf.start,
+        duration: Math.max(0.5, buf.end - buf.start),
+        text,
+      });
+    }
+    buf = null;
+  };
+
+  for (const seg of segments) {
+    const piece = seg.text.replace(/\s+/g, " ").trim();
+    if (!piece) continue;
+    const segEnd = seg.start + (seg.duration || 0);
+
+    // A long gap before this fragment means the previous sentence is over.
+    if (buf && seg.start - buf.end > MAX_GAP) flush();
+
+    if (!buf) {
+      buf = { start: seg.start, end: segEnd, text: piece };
+    } else {
+      buf.text += ` ${piece}`;
+      buf.end = segEnd;
+    }
+
+    if (ENDS_SENTENCE.test(buf.text) || buf.text.length >= MAX_CHARS) flush();
+  }
+  flush();
+
+  return grouped;
+}
+
 // One segment as streamed back by the backend over SSE.
 export type StreamedSegment = {
   offset: number; // seconds
@@ -65,13 +115,16 @@ export async function fetchTranscript(
   }
 
   const data = (await res.json()) as TranscriptResponse;
+  // Merge fragment captions into sentences before anything translates/dubs them.
+  const segments = groupIntoSentences(data.segments ?? []);
   console.log("[fetchTranscript] ← transcript received", {
     videoId,
     sourceLang: data.source_lang,
-    segmentCount: data.segments?.length ?? 0,
+    rawSegmentCount: data.segments?.length ?? 0,
+    sentenceCount: segments.length,
     tookMs: Date.now() - startedAt,
   });
-  return data;
+  return { ...data, segments };
 }
 
 // POSTs the segments to the backend and consumes the SSE stream, invoking

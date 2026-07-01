@@ -23,12 +23,24 @@ app = modal.App("sightahead-f5")
 # Paths inside the container — mounted from the Volume below.
 MODEL_PATH = "/weights/mn_model_last.pt"
 VOCAB_PATH = "/weights/mn_vocab.txt"
-# Phase 1 = one fixed Mongolian voice for every video. Upload a clean ~10s clip
-# as ref_default.wav. Phase 2 (voice cloning) passes a per-video ref instead.
-DEFAULT_REF_AUDIO = "/weights/ref_default.wav"
-# Exact transcript of ref_default.wav. Set this for Mongolian refs — Whisper
-# mis-transcribes Mongolian (outputs garbage), which produces broken/short audio.
-DEFAULT_REF_TEXT = "Хэрэв Умард Солонгост дайны аюул тулгарвал тэр гэрээ үйлчилнэ."
+# High-quality reference: uncompressed source, 24kHz mono, no background music.
+# ref_male.wav is also the fallback for any voice without its own preset.
+DEFAULT_REF_AUDIO = "/weights/ref_male.wav"
+# Exact transcript of the reference clip (Whisper mis-reads Mongolian, so set it).
+_MALE_REF_TEXT = (
+    "Орлого шогийн хярд зайдууд зусаж буй үхэрчин Санжжав гуайн усан дээр "
+    "тааралдтал, Халиун сумын харьяат Гавж хөгшнийг Баянуул суманд нутаг зааж, "
+    "хярын мухарт хуц ухна маллуулахаар суулгасан төдийгүй, нутгийн ардтай "
+    "харьцаанд орвол буцаад ял авч шоронд орох сануулгатай тухайн сонин болгон "
+    "ярьж байна."
+)
+DEFAULT_REF_TEXT = _MALE_REF_TEXT
+
+# Preset voices selected by the frontend voice toggle (voice_ref). Female has no
+# dedicated clip yet → falls back to DEFAULT (the male clip) until one is added.
+VOICES = {
+    "male": {"audio": "/weights/ref_male.wav", "text": _MALE_REF_TEXT},
+}
 
 # GPU image: torch + f5-tts (pulls transformers/vocos) + soundfile; ffmpeg for I/O.
 image = (
@@ -47,6 +59,10 @@ weights = modal.Volume.from_name("sightahead-f5-weights", create_if_missing=True
     volumes={"/weights": weights},
     scaledown_window=60,  # stay warm 60s after the last call, then scale to zero
     timeout=600,
+    # Cap concurrent GPU containers: chunked spawns queue here instead of
+    # exhausting the account's GPU quota (ResourceExhaustedError). Still
+    # incremental (chunks finish in waves) and fewer cold starts (reuse).
+    max_containers=3,
 )
 class F5:
     @modal.enter()
@@ -69,12 +85,14 @@ class F5:
         segments: list[dict],
         ref_audio_b64: str | None = None,
         ref_text: str = "",
+        voice: str | None = None,
     ) -> list[dict]:
         """Synthesize a whole video's segments in one GPU session.
 
         segments: [{"index": int, "text": "<mongolian>"}]
-        ref_audio_b64: optional per-video reference clip (voice cloning). If None,
-            the bundled DEFAULT_REF_AUDIO (fixed Mongolian voice) is used.
+        ref_audio_b64: optional per-video reference clip (voice cloning).
+        voice: preset voice key ("male"/"female") → bundled ref clip.
+        Priority: ref_audio_b64 > voice preset > DEFAULT.
         Returns: [{"index": int, "audio_b64": "<wav>", "audio_ms": int}]
         """
         import base64
@@ -88,6 +106,9 @@ class F5:
             with open(ref_path, "wb") as f:
                 f.write(base64.b64decode(ref_audio_b64))
             ref_text_used = ref_text or ""  # "" → Whisper auto-transcribe
+        elif voice and voice in VOICES:
+            ref_path = VOICES[voice]["audio"]
+            ref_text_used = VOICES[voice]["text"]
         else:
             ref_path = DEFAULT_REF_AUDIO
             ref_text_used = DEFAULT_REF_TEXT
@@ -103,6 +124,8 @@ class F5:
                 ref_file=ref_path,
                 ref_text=ref_text_used,
                 gen_text=text,
+                nfe_step=40,        # more denoising steps → smoother, less robotic (default 32)
+                cfg_strength=1.8,   # lower → less over-emphasized/robotic (default 2.0)
             )
             buf = io.BytesIO()
             sf.write(buf, wav, sr, format="WAV")

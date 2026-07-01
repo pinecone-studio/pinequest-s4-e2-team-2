@@ -8,8 +8,10 @@ import { Label } from "@/_comps/ui/Label";
 import GoogleIcon from "@/_comps/GoogleIcon";
 import { signInWithGoogleAndSync } from "@/lib/google-auth";
 import { loginAsDemo, loginWithEmail, registerWithEmail } from "@/lib/auth";
+import { useUI } from "@/_comps/providers/UIprovider";
 
 export default function SignInModal({ onClose }: { onClose: () => void }) {
+  const { setAllowAccess } = useUI();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,6 +55,8 @@ export default function SignInModal({ onClose }: { onClose: () => void }) {
     setIsLoading(true);
     try {
       await loginAsDemo();
+      // Demo unlock: grant access to the paid (notes/summary/AI) tabs.
+      setAllowAccess(true);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Туршилтаар нэвтрэхэд алдаа гарлаа.");

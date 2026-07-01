@@ -3,6 +3,8 @@ import { Cormorant, Onest, Caveat, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/_comps/providers/AuthProvider";
 import { Toaster } from "@/_comps/ui/Sonner";
+import { UIProvider } from "@/_comps/providers/UIprovider";
+import { VideoProcessProvider } from "@/_comps/providers/VideoProcessProvider";
 
 // Дизайн репо-гийн фонтууд — зөвхөн .dashboard-* skin эдгээр CSS хувьсагчдыг ашиглана.
 const onest = Onest({
@@ -42,7 +44,11 @@ export default function RootLayout({
       className={`dark h-full antialiased ${onest.variable} ${cormorant.variable} ${caveat.variable} ${geistMono.variable}`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-body">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <UIProvider>
+            <VideoProcessProvider>{children}</VideoProcessProvider>
+          </UIProvider>
+        </AuthProvider>
         <Toaster />
       </body>
     </html>

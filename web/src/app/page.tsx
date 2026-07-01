@@ -2,24 +2,23 @@
 
 import { useCallback, useState } from "react";
 import { ThemeProvider } from "@/_comps/providers/ThemeProvider";
+import { useVideoProcess } from "@/_comps/providers/VideoProcessProvider";
 import { useAuth } from "@/_comps/providers/AuthProvider";
 import Header from "@/_comps/Header";
 import SearchBox from "@/_comps/SearchBox";
-import DashboardView, { type DashboardVideoSelection } from "@/_comps/dashboard/DashboardView";
+import UserDashboard from "@/_comps/dashboard/UserDashboard";
 import SignInModal from "@/_comps/SignInModal";
 import AnimatedBackground from "@/_comps/AnimatedBackground";
 
 export default function Home() {
-  const { user, loading, logout } = useAuth();
-  const [selectedVideo, setSelectedVideo] = useState<DashboardVideoSelection | null>(null);
+  const { user, loading } = useAuth();
+  // Single shared provider (mounted in the root layout) owns selection + pipeline.
+  const { videoId } = useVideoProcess();
   const [showSignIn, setShowSignIn] = useState(false);
 
-  const handleSearch = useCallback((url: string, video?: DashboardVideoSelection) => {
-    setSelectedVideo({ url, ...video });
-  }, []);
-
-  const handleUnauthenticatedVideoSelect = useCallback((url: string) => {
-    setSelectedVideo({ url });
+  // Only reached for LOGGED-OUT users clicking a result → prompt sign-in.
+  // Signed-in selection is handled inside SearchBox via the provider.
+  const handleUnauthenticatedVideoSelect = useCallback(() => {
     setShowSignIn(true);
   }, []);
 
@@ -27,34 +26,22 @@ export default function Home() {
     return null;
   }
 
-  if (user) {
-    return (
-      <ThemeProvider>
-        <DashboardView
-          videoUrl={selectedVideo?.url ?? ""}
-          selectedVideo={selectedVideo}
-          onBack={() => setSelectedVideo(null)}
-          onSearch={handleSearch}
-          onLogout={() => logout()}
-        />
-      </ThemeProvider>
-    );
-  }
+  const showDashboard = Boolean(user && videoId);
 
   return (
     <ThemeProvider>
       <div className="min-h-screen bg-background text-foreground transition-colors duration-300">
         <Header onSignIn={() => setShowSignIn(true)} />
-
-        <main className="min-h-screen flex flex-col items-center justify-center pt-20 pb-12 px-4">
-          <div className="w-full flex flex-col items-center justify-center">
-            <AnimatedBackground />
-            <div className="relative w-full flex flex-col items-center">
-              <SearchBox onSubmit={handleUnauthenticatedVideoSelect} />
+        <SearchBox onSubmit={handleUnauthenticatedVideoSelect} />
+        {showDashboard ? (
+          <UserDashboard />
+        ) : (
+          <main className="min-h-screen flex flex-col items-center justify-center pt-20 pb-12 px-4">
+            <div className="w-full flex flex-col items-center justify-center">
+              <AnimatedBackground />
             </div>
-          </div>
-        </main>
-
+          </main>
+        )}
         {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}
       </div>
     </ThemeProvider>

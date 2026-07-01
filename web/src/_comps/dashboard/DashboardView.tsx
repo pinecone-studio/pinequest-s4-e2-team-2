@@ -214,7 +214,9 @@ export default function DashboardView({
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState("");
   const playbackRef = useRef({ time: 0, duration: 0 });
-  const appliedDubVolumeModeRef = useRef<typeof dubMode | null>(null);
+  // Dub "buffer once" gate: while dub is on we hold the video until the current
+  // segment's audio is ready, then release and never auto-pause again.
+  const dubGateReleasedRef = useRef(false);
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchChannelTabs = useChannelTabResults(
     selectedSearchChannel,
@@ -304,15 +306,14 @@ export default function DashboardView({
     loading: processingLoading,
     error: processingError,
     sourceLang,
-    translationVersion,
   } = useProcessedVideo(videoId);
-  // Translate the fetched captions (no TTS) so subtitles show Mongolian by
-  // default; audio dubbing remains handled by useDubAudio when toggled on.
+  // Translate-only subtitles (Azure /process, no TTS) ONLY when dub is OFF —
+  // when dub is on, useDubAudio supplies the translated subtitles instead.
   const translatedSubs = useTranslatedSubtitles(
     videoId,
     processedSegments,
     sourceLang,
-    translationVersion,
+    dubMode !== "mongolian",
   );
 
   // CHANGED: derive a staged "process" status + progress for the frame overlay.
@@ -391,9 +392,6 @@ export default function DashboardView({
   }, [player.duration, player.time]);
 
   useEffect(() => {
-    if (appliedDubVolumeModeRef.current === dubMode) return;
-    appliedDubVolumeModeRef.current = dubMode;
-
     if (dubMode === "mongolian") {
       player.unMute();
       player.setVolume(ytVolume);
@@ -402,27 +400,56 @@ export default function DashboardView({
     }
   }, [dubMode, ytVolume, player.unMute, player.setVolume]);
 
+  // "Buffer once": while dub is on, hold the video until the current segment's
+  // audio is ready, then play and don't auto-pause again — so the dub starts
+  // from the beginning without the video running ahead of the GPU. Once released,
+  // playback stays smooth (synthesis outpaces playback, so it keeps up).
+  useEffect(() => {
+    if (dubMode !== "mongolian") {
+      dubGateReleasedRef.current = false;
+      return;
+    }
+    if (dubGateReleasedRef.current) return; // already buffered → leave it playing
+
+    const seg = dub.audioSegments.find(
+      (s) => player.time >= s.start && player.time < s.start + s.duration,
+    );
+    if (seg?.ready) {
+      dubGateReleasedRef.current = true;
+      player.play();
+    } else if (player.playing) {
+      player.pause(); // buffering: wait for this segment's audio
+    }
+  }, [
+    dubMode,
+    player.time,
+    player.playing,
+    player.play,
+    player.pause,
+    dub.audioSegments,
+  ]);
+
   // Log the caption-fetch lifecycle for the selected video.
   useEffect(() => {
     if (processingError) {
       console.warn("caption fetch failed:", processingError);
     } else if (!processingLoading && processedSegments.length) {
-      console.log(`captions loaded: ${processedSegments.length} segments for ${videoId}`);
+      console.log(
+        `captions loaded: ${processedSegments.length} segments for ${videoId}`,
+      );
     }
   }, [processedSegments, processingLoading, processingError, videoId]);
 
   // Unlock browser autoplay gate on first user interaction, then toggle dub.
   const handleToggleDub = useCallback(() => {
     try {
-      const audioWindow = window as Window & {
-        webkitAudioContext?: typeof AudioContext;
-      };
-      const AudioContextCtor = window.AudioContext ?? audioWindow.webkitAudioContext;
-      const ctx = AudioContextCtor ? new AudioContextCtor() : null;
-      if (ctx) void ctx.resume().then(() => ctx.close())
+      const ctx: AudioContext = new (
+        (window as any).AudioContext ?? (window as any).webkitAudioContext
+      )();
+      void ctx.resume().then(() => ctx.close());
     } catch {}
-    setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"))
-  }, [])
+    setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"));
+  }, []);
 
   // Persist the current playback position to watch history (called on a timer,
   // on unmount, and after adding a note).
@@ -751,14 +778,17 @@ export default function DashboardView({
           {!isSearching && searchError && (
             <div className="dashboard-search-status">{searchError}</div>
           )}
-          {!isSearching && searchResults.length > 0 && (
-            selectedSearchChannel ? (
+          {!isSearching &&
+            searchResults.length > 0 &&
+            (selectedSearchChannel ? (
               <ChannelView
                 channel={selectedSearchChannel}
                 results={searchResults}
                 tabResults={searchChannelTabs.tabResults}
                 activeTab={activeSearchChannelTab}
-                isLoading={searchChannelTabs.loadingTab === activeSearchChannelTab}
+                isLoading={
+                  searchChannelTabs.loadingTab === activeSearchChannelTab
+                }
                 error={searchChannelTabs.error}
                 onTabChange={(tab) => {
                   searchChannelTabs.clearError();
@@ -774,8 +804,7 @@ export default function DashboardView({
                 counts={searchCounts}
                 onSelect={selectSearchResult}
               />
-            )
-          )}
+            ))}
         </div>
       )}
       <div className={layoutClassName}>

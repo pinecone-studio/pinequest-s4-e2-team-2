@@ -8,6 +8,7 @@ so the UI can play it like a live dub.
 """
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -18,7 +19,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.utils.audio import audio_duration_ms_from_bytes
-from app.services.translator import translate_timed
+from app.services.translator import (
+    TRANSLATION_CACHE_VERSION,
+    TimedText,
+    TranslatedSegment,
+    translate_timed_segments,
+)
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
 from app.services.cache_service import get_cached_video, cache_video, save_summary, get_latest_summary
@@ -34,6 +40,7 @@ class SegmentInput(BaseModel):
     start: float = 0.0
     duration: float = 0.0
     text: str
+    translated_text: str | None = None
 
 
 class ProcessRequest(BaseModel):
@@ -53,6 +60,256 @@ class SummaryRequest(BaseModel):
 def _sse(obj: dict) -> str:
     """Format one Server-Sent Events message."""
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+def _translation_mode(tts: bool) -> str:
+    return "dub" if tts else "subtitle"
+
+
+def _source_fingerprint(segments: list[SegmentInput]) -> str:
+    payload = [
+        {
+            "start": round(segment.start, 3),
+            "duration": round(segment.duration, 3),
+            "text": segment.text.strip(),
+        }
+        for segment in segments
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _source_segment_dict(segment: SegmentInput) -> dict:
+    return {
+        "start": segment.start,
+        "duration": segment.duration,
+        "text": segment.text,
+        "source": "youtube_captions",
+        "translated_text": None,
+    }
+
+
+def _translated_segment_dict(segment: TranslatedSegment) -> dict:
+    return {
+        "start": segment.start,
+        "duration": segment.duration,
+        "text": segment.text,
+        "source": "youtube_captions",
+        "translated_text": segment.translated_text,
+    }
+
+
+def _translated_segment_from_cache(data: dict) -> TranslatedSegment | None:
+    text = str(data.get("text") or "").strip()
+    translated_text = str(data.get("translated_text") or "").strip()
+    if not text or not translated_text:
+        return None
+    return TranslatedSegment(
+        start=float(data.get("start") or 0),
+        duration=float(data.get("duration") or 0),
+        text=text,
+        translated_text=translated_text,
+    )
+
+
+def _incoming_translated_segments(segments: list[SegmentInput]) -> list[TranslatedSegment] | None:
+    if not segments:
+        return None
+    translated_segments: list[TranslatedSegment] = []
+    for segment in segments:
+        translated_text = (segment.translated_text or "").strip()
+        if not translated_text:
+            return None
+        translated_segments.append(
+            TranslatedSegment(
+                start=segment.start,
+                duration=segment.duration,
+                text=segment.text,
+                translated_text=translated_text,
+            )
+        )
+    return translated_segments
+
+
+def _voice_cache_key(gender: str | None) -> str:
+    value = (gender or "").strip().lower()
+    return "male" if value == "male" else "female"
+
+
+def _cached_translation_segments(
+    video_id: str | None, segments: list[SegmentInput], mode: str
+) -> list[TranslatedSegment] | None:
+    if not video_id:
+        return None
+
+    cached = get_cached_video(video_id)
+    translations = cached.get("translations") if isinstance(cached, dict) else None
+    entry = translations.get(mode) if isinstance(translations, dict) else None
+    if not isinstance(entry, dict):
+        return None
+
+    if entry.get("version") != TRANSLATION_CACHE_VERSION:
+        return None
+
+    if entry.get("source_fingerprint") != _source_fingerprint(segments):
+        return None
+
+    cached_segments = entry.get("segments") or []
+    if not isinstance(cached_segments, list):
+        return None
+
+    translated_segments: list[TranslatedSegment] = []
+    for cached_segment in cached_segments:
+        if not isinstance(cached_segment, dict):
+            return None
+        translated_segment = _translated_segment_from_cache(cached_segment)
+        if not translated_segment:
+            return None
+        translated_segments.append(translated_segment)
+
+    return translated_segments or None
+
+
+def _cached_dub_audio_segments(
+    video_id: str | None,
+    source_segments: list[SegmentInput],
+    gender: str | None,
+) -> list[dict] | None:
+    if not video_id:
+        return None
+
+    cached = get_cached_video(video_id)
+    translations = cached.get("translations") if isinstance(cached, dict) else None
+    entry = translations.get("dub") if isinstance(translations, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("version") != TRANSLATION_CACHE_VERSION:
+        return None
+    if entry.get("source_fingerprint") != _source_fingerprint(source_segments):
+        return None
+
+    tts_cache = entry.get("tts")
+    if not isinstance(tts_cache, dict):
+        return None
+    voice_entry = tts_cache.get(_voice_cache_key(gender))
+    if not isinstance(voice_entry, dict):
+        return None
+    if voice_entry.get("version") != TRANSLATION_CACHE_VERSION:
+        return None
+
+    cached_segments = voice_entry.get("segments")
+    if not isinstance(cached_segments, list) or not cached_segments:
+        return None
+
+    out: list[dict] = []
+    for cached_segment in cached_segments:
+        if not isinstance(cached_segment, dict):
+            return None
+        audio_b64 = cached_segment.get("audio_b64")
+        audio_ms = cached_segment.get("audio_ms")
+        translated_segment = _translated_segment_from_cache(cached_segment)
+        if not translated_segment or not isinstance(audio_b64, str):
+            return None
+        try:
+            audio_ms_int = int(audio_ms or 0)
+        except (TypeError, ValueError):
+            return None
+        out.append(
+            {
+                **_translated_segment_dict(translated_segment),
+                "audio_b64": audio_b64,
+                "audio_ms": audio_ms_int,
+            }
+        )
+
+    return out
+
+
+def _cache_translation_segments(
+    video_id: str | None,
+    source_lang: str,
+    source_segments: list[SegmentInput],
+    translated_segments: list[TranslatedSegment],
+    mode: str,
+) -> None:
+    if not video_id:
+        return
+
+    current = get_cached_video(video_id) or {}
+    translations = current.get("translations") if isinstance(current.get("translations"), dict) else {}
+    translations = dict(translations)
+    source_fingerprint = _source_fingerprint(source_segments)
+    existing_entry = translations.get(mode) if isinstance(translations.get(mode), dict) else {}
+    same_source = (
+        existing_entry.get("version") == TRANSLATION_CACHE_VERSION
+        and existing_entry.get("source_fingerprint") == source_fingerprint
+    )
+    translations[mode] = {
+        **(existing_entry if same_source else {}),
+        "version": TRANSLATION_CACHE_VERSION,
+        "source_fingerprint": source_fingerprint,
+        "segments": [_translated_segment_dict(segment) for segment in translated_segments],
+    }
+
+    cache_video(
+        video_id,
+        {
+            **current,
+            "video_id": video_id,
+            "source_lang": source_lang,
+            "segments": current.get("segments")
+            or [_source_segment_dict(segment) for segment in source_segments],
+            "translations": translations,
+        },
+    )
+
+
+def _cache_dub_audio_segments(
+    video_id: str | None,
+    source_lang: str,
+    source_segments: list[SegmentInput],
+    translated_segments: list[TranslatedSegment],
+    audio_segments: list[dict],
+    gender: str | None,
+) -> None:
+    if not video_id:
+        return
+
+    current = get_cached_video(video_id) or {}
+    translations = current.get("translations") if isinstance(current.get("translations"), dict) else {}
+    translations = dict(translations)
+    source_fingerprint = _source_fingerprint(source_segments)
+    existing_entry = translations.get("dub") if isinstance(translations.get("dub"), dict) else {}
+    same_source = (
+        existing_entry.get("version") == TRANSLATION_CACHE_VERSION
+        and existing_entry.get("source_fingerprint") == source_fingerprint
+    )
+    tts_cache = existing_entry.get("tts") if same_source and isinstance(existing_entry.get("tts"), dict) else {}
+    tts_cache = dict(tts_cache)
+    tts_cache[_voice_cache_key(gender)] = {
+        "version": TRANSLATION_CACHE_VERSION,
+        "audio_format": "mp3-base64",
+        "segments": audio_segments,
+    }
+    translations["dub"] = {
+        **(existing_entry if same_source else {}),
+        "version": TRANSLATION_CACHE_VERSION,
+        "source_fingerprint": source_fingerprint,
+        "segments": [_translated_segment_dict(segment) for segment in translated_segments],
+        "tts": tts_cache,
+    }
+
+    cache_video(
+        video_id,
+        {
+            **current,
+            "video_id": video_id,
+            "source_lang": source_lang,
+            "segments": current.get("segments")
+            or [_source_segment_dict(segment) for segment in source_segments],
+            "translations": translations,
+        },
+    )
 
 
 @router.post("/process")
@@ -121,8 +378,8 @@ async def process_video(request: ProcessRequest):
         # Translate-only fast path (subtitles): stream the translated text with no
         # audio, then finish. Avoids the cost/latency of TTS when no dub is needed.
         if not request.tts:
-            for i, seg in enumerate(segments_in):
-                mn_text = translations[i] if i < len(translations) else seg.text
+            total = len(translated_segments)
+            for i, seg in enumerate(translated_segments):
                 yield _sse(
                     {
                         "index": i,
@@ -131,7 +388,7 @@ async def process_video(request: ProcessRequest):
                             "offset": seg.start,
                             "duration": seg.duration,
                             "text": seg.text,
-                            "translated_text": mn_text,
+                            "translated_text": seg.translated_text,
                             "audio_b64": "",
                             "audio_ms": 0,
                         },
@@ -139,28 +396,66 @@ async def process_video(request: ProcessRequest):
                 )
             if request.video_id:
                 try:
-                    cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
-                        {"start": s.start, "duration": s.duration, "text": s.text,
-                         "source": "youtube_captions",
-                         "translated_text": translations[i] if i < len(translations) else s.text}
-                        for i, s in enumerate(segments_in)
-                    ]})
+                    _cache_translation_segments(
+                        request.video_id,
+                        request.source_lang,
+                        segments_in,
+                        translated_segments,
+                        mode,
+                    )
                 except Exception:
                     logger.warning("/process cache_video failed (non-fatal)", exc_info=True)
-            logger.info("/process → done (translate-only): %d segments (video_id=%s)", total, request.video_id)
+            logger.info(
+                "/process → done (translate-only): %d grouped segments (video_id=%s)",
+                total,
+                request.video_id,
+            )
             yield _sse({"done": True, "total": total})
             return
 
         # 2. TTS in parallel — all segments at once, stream each as it finishes.
         # Frontend places segments by index so out-of-order delivery is fine.
         # CHANGED: log the dubbing (vocalizing) stage so progress is traceable.
+        total = len(translated_segments)
+
+        cached_audio_segments = _cached_dub_audio_segments(
+            request.video_id,
+            segments_in,
+            request.gender,
+        )
+        if cached_audio_segments:
+            logger.info(
+                "/process TTS audio cache hit: %d segments gender=%s (video_id=%s)",
+                len(cached_audio_segments),
+                _voice_cache_key(request.gender),
+                request.video_id,
+            )
+            for i, cached_segment in enumerate(cached_audio_segments):
+                yield _sse(
+                    {
+                        "index": i,
+                        "total": len(cached_audio_segments),
+                        "segment": {
+                            "offset": cached_segment["start"],
+                            "duration": cached_segment["duration"],
+                            "text": cached_segment["text"],
+                            "translated_text": cached_segment["translated_text"],
+                            "audio_b64": cached_segment["audio_b64"],
+                            "audio_ms": cached_segment["audio_ms"],
+                        },
+                    }
+                )
+            yield _sse({"done": True, "total": len(cached_audio_segments)})
+            return
+
         logger.info("/process stage=dubbing (TTS) %d segments (video_id=%s)", total, request.video_id)
         tts_failures = 0
+        audio_results: list[dict | None] = [None] * total
 
         _bracket_only = re.compile(r"^\s*(\[.*?\]\s*)+$")
 
         def _tts_one(i: int) -> tuple[int, str, str, int]:
-            mn_text = translations[i] if i < len(translations) else segments_in[i].text
+            mn_text = translated_segments[i].translated_text
             if _bracket_only.match(mn_text):
                 return i, mn_text, "", 0
             try:
@@ -181,7 +476,7 @@ async def process_video(request: ProcessRequest):
                 i, mn_text, audio_b64, audio_ms = future.result()
                 if not audio_b64:
                     tts_failures += 1
-                seg = segments_in[i]
+                seg = translated_segments[i]
                 logger.debug(
                     "/process → segment %d/%d: offset=%.2f dur=%.2f audio_ms=%d translated=%r",
                     i, total, seg.start, seg.duration, audio_ms, mn_text[:80],
@@ -200,6 +495,11 @@ async def process_video(request: ProcessRequest):
                         },
                     }
                 )
+                audio_results[i] = {
+                    **_translated_segment_dict(seg),
+                    "audio_b64": audio_b64,
+                    "audio_ms": audio_ms,
+                }
 
         logger.info(
             "/process → done: %d segments streamed, %d TTS failures (video_id=%s)",
@@ -210,12 +510,22 @@ async def process_video(request: ProcessRequest):
 
         if request.video_id:
             try:
-                cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
-                    {"start": s.start, "duration": s.duration, "text": s.text,
-                     "source": "youtube_captions",
-                     "translated_text": translations[i] if i < len(translations) else s.text}
-                    for i, s in enumerate(segments_in)
-                ]})
+                _cache_translation_segments(
+                    request.video_id,
+                    request.source_lang,
+                    segments_in,
+                    translated_segments,
+                    mode,
+                )
+                if tts_failures == 0 and all(audio_results):
+                    _cache_dub_audio_segments(
+                        request.video_id,
+                        request.source_lang,
+                        segments_in,
+                        translated_segments,
+                        [result for result in audio_results if result],
+                        request.gender,
+                    )
             except Exception:
                 logger.warning("/process cache_video failed (non-fatal)", exc_info=True)
 
@@ -232,6 +542,7 @@ class DubRequest(BaseModel):
     video_id: str | None = None
     source_lang: str = "en"
     segments: list[SegmentInput] = []
+    gender: str = "female"
 
 
 @router.post("/api/dub")
@@ -242,24 +553,62 @@ async def dub_video(request: DubRequest):
         raise HTTPException(status_code=400, detail="No segments provided.")
 
     segments_in = request.segments
-    total = len(segments_in)
+    input_total = len(segments_in)
+    mode = "dub"
 
-    logger.info("/api/dub ← video_id=%s segments=%d", request.video_id, total)
+    logger.info("/api/dub ← video_id=%s segments=%d", request.video_id, input_total)
 
-    translations = translate_timed(
-        [(seg.text, seg.duration) for seg in segments_in], request.source_lang
+    translated = _cached_translation_segments(request.video_id, segments_in, mode)
+    if translated:
+        logger.info(
+            "/api/dub translation cache hit: %d grouped segments (video_id=%s)",
+            len(translated),
+            request.video_id,
+        )
+    else:
+        translated = _incoming_translated_segments(segments_in)
+        if translated:
+            logger.info(
+                "/api/dub using incoming translated subtitles: %d segments (video_id=%s)",
+                len(translated),
+                request.video_id,
+            )
+        else:
+            translated = translate_timed_segments(
+                [
+                    TimedText(start=seg.start, duration=seg.duration, text=seg.text)
+                    for seg in segments_in
+                ],
+                request.source_lang,
+                fit_durations=True,
+            )
+
+    cached_audio_segments = _cached_dub_audio_segments(
+        request.video_id,
+        segments_in,
+        request.gender,
     )
+    if cached_audio_segments:
+        logger.info(
+            "/api/dub TTS audio cache hit: %d segments gender=%s (video_id=%s)",
+            len(cached_audio_segments),
+            _voice_cache_key(request.gender),
+            request.video_id,
+        )
+        return {"translated_segments": cached_audio_segments, "audio_url": None}
 
     translated_segments = []
-    for i, seg in enumerate(segments_in):
-        mn_text = translations[i] if i < len(translations) else seg.text
+    tts_failures = 0
+    for i, seg in enumerate(translated):
+        mn_text = seg.translated_text
         try:
-            audio_bytes = synthesize(mn_text)
+            audio_bytes = synthesize(mn_text, {"gender": request.gender})
             audio_ms = audio_duration_ms_from_bytes(audio_bytes)
             audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
         except Exception:
             logger.exception("/api/dub TTS failed segment %d", i)
             audio_b64, audio_ms = "", 0
+            tts_failures += 1
 
         translated_segments.append({
             "start": seg.start,
@@ -272,17 +621,26 @@ async def dub_video(request: DubRequest):
 
     if request.video_id:
         try:
-            cache_video(request.video_id, {"source_lang": request.source_lang, "segments": [
-                {"start": s["start"], "duration": s["duration"],
-                 "text": s["text"],
-                 "source": "youtube_captions",
-                 "translated_text": s["translated_text"]}
-                for s in translated_segments
-            ]})
+            _cache_translation_segments(
+                request.video_id,
+                request.source_lang,
+                segments_in,
+                translated,
+                mode,
+            )
+            if tts_failures == 0:
+                _cache_dub_audio_segments(
+                    request.video_id,
+                    request.source_lang,
+                    segments_in,
+                    translated,
+                    translated_segments,
+                    request.gender,
+                )
         except Exception:
             logger.warning("/api/dub cache_video failed (non-fatal)", exc_info=True)
 
-    logger.info("/api/dub → done: %d segments (video_id=%s)", total, request.video_id)
+    logger.info("/api/dub → done: %d grouped segments (video_id=%s)", len(translated), request.video_id)
     return {"translated_segments": translated_segments, "audio_url": None}
 
 

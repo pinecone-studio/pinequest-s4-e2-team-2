@@ -110,7 +110,12 @@ def get_firebase_app() -> Any:
     if settings.firebase_storage_bucket:
         options["storageBucket"] = settings.firebase_storage_bucket
 
-    return firebase_admin.initialize_app(_load_certificate(), options)
+    try:
+        return firebase_admin.initialize_app(_load_certificate(), options)
+    except ValueError:
+        # A concurrent request already initialized the default app (race between
+        # two first-time callers). Reuse it instead of failing auth with a 401.
+        return firebase_admin.get_app()
 
 
 def get_firestore_client() -> Any:

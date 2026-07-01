@@ -4,6 +4,9 @@ import { apifetch } from "./axios";
 // Firebase token, sends the guest-session cookie (withCredentials), returns the
 // parsed body directly, and throws with the backend's `detail` on error.
 
+export const TRANSLATION_CACHE_VERSION =
+  process.env.NEXT_PUBLIC_TRANSLATION_CACHE_VERSION ?? "sentence-v2";
+
 // ===== Types =====
 
 export type UserProfile = {
@@ -82,6 +85,8 @@ export type CachedTranscriptSegment = {
 export type CachedVideoTranscript = {
   video_id: string;
   source_lang: string;
+  translation_version?: string | null;
+  translation_mode?: "subtitle" | "dub" | null;
   segments: CachedTranscriptSegment[];
 };
 

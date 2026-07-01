@@ -58,7 +58,7 @@ function statusText(status: DubStep | undefined, progress: { done: number; total
     return progress ? `OpenAI орчуулж байна... ${progress.done}/${progress.total}` : "OpenAI орчуулж байна..."
   }
   if (status === "tts") {
-    return progress ? `Azure TTS дуб үүсгэж байна... ${progress.done}/${progress.total}` : "Azure TTS дуб үүсгэж байна..."
+    return progress ? `Монгол хоолой үүсгэж байна... ${progress.done}/${progress.total}` : "Монгол хоолой үүсгэж байна..."
   }
   if (status === "ready") return "✓ Монгол дуб бэлэн болсон"
   return ""

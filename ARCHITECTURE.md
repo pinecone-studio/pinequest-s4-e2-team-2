@@ -1,104 +1,101 @@
-# Helex — Architecture
+# SightAhead — Mongolian dub architecture
 
-## Зорилго
-
-YouTube контентыг монгол хэрэглэгчид **монгол subtitle болон монгол дубтайгаар** саадгүй үзүүлэх.
-
-Хэрэглэгч URL оруулахад:
-- Монгол **subtitle** харагдана
-- Монгол **дуу** сонсогдоно
-- Хоёулаа **нэгэн зэрэг**, синхроноор ажиллана
+YouTube бичлэгийг **монгол хоолойгоор** хувиргадаг (subtitle + voice-over). Энэ
+баримт нь **дубын систем** хэрхэн ажилладгийг тайлбарлана (notes/search/auth/history
+нь тусдаа, энд хамаарахгүй).
 
 ---
 
-## Системийн давхаргууд
+## Урсгал (өндөр түвшин)
 
 ```
-Хэрэглэгч (Browser)
-        ↓
-Frontend — Next.js (Vercel)
-        ↓  REST API
-Backend — FastAPI (Railway)
-        ↓
-Гадаад үйлчилгээнүүд:
-  - Transcript (RapidAPI / youtube-transcript-api)
-  - Орчуулга (OpenAI / Gemini)
-  - TTS дуб (Azure / F5)
-  - Auth + Cache (Firebase)
+Browser (DUB toggle асаах)
+  │  useProcessedVideo → /api/youtube/transcript (RapidAPI) → caption segments
+  │  useDubAudio → POST /jobs {video_id, segments, voice_ref}
+  ▼
+FastAPI orchestration (CPU, always-on)
+  1. cache_key = hash(video_id + lang + voice_ref)
+  2. cache hit? → дууссан job-ийг шууд буцаа (GPU дуудахгүй)        [дахин дубладаггүй]
+  3. in-flight? → тэр job-ийг буцаа                                  [давхар ажил үгүй]
+  4. OpenAI орчуулга (duration-aware, богино → segment-д багтана)
+  5. segment-үүдийг 8-аар CHUNK болгож Modal F5 рүү .spawn (параллель)
+  6. job {processing, calls[], segments[]} хадгалж job_id буцаа
+  ▼ (background, Modal GPU, scale-to-zero)
+Modal F5 (gpu/f5_modal.py) — use_ema=False, preset voice (male/female)
+  └ chunk бүр → WAV bytes буцаана
+  ▼
+GET /jobs/{id} (browser polling)
+  - дууссан chunk бүрийн audio-г R2-д хийж, segment.audio_url бөглөнө  [INCREMENTAL]
+  - progress = бөглөгдсөн segment % ; бүх chunk дуусахад status=done
+  ▼
+Browser: audio_url-уудыг видеоны цагтай синк тоглуулна (богино бол 1.5× хүртэл
+         хурдасгаж segment-д багтаана). Subtitle = job-ийн translated_text.
 ```
+
+**Гол зарчмууд:** GPU хэзээ ч request дотор синхроноор ажиллахгүй; ижил (видео+хэл+хоолой)
+дахин дубладаггүй (cache); chunk-аар incremental тул эхний хэсэг эрт тоглоно.
 
 ---
 
-## Үндсэн pipeline
+## File map (дубын хэсэг)
 
-```
-YouTube URL
-    ↓
-Transcript татах
-    ↓
-Монгол орчуулга
-    ↓
-Монгол дуб (TTS)
-    ↓
-Subtitle + Дуб хоёулаг нэгэн зэрэг тоглуулна
-    ↓
-Cache хадгална — дараагийн хэрэглэгч шууд авна
-```
+### GPU — `gpu/` (Modal-д ТУСДАА deploy)
+| Файл | Үүрэг |
+|------|-------|
+| `f5_modal.py` | Modal F5 app. `use_ema=False`. `VOICES` preset (male=киночин, female=YouTuber). `synthesize_segments(segments, ref_audio_b64?, voice?)` → WAV |
+| `README.md` | weights upload + `modal deploy` заавар |
 
----
+### Backend — `backend/app/`
+| Файл | Үүрэг |
+|------|-------|
+| `routers/jobs.py` | `POST /jobs`, `GET /jobs/{id}` (validation + rate-limit) |
+| `services/dub_service.py` | Зохион байгуулагч: cache/dedup → transcript → translate → **chunk spawn** → **incremental poll** |
+| `services/transcript_service.py` | RapidAPI транскрипт (IP-блокгүй) |
+| `services/translator.py` | OpenAI орчуулга (duration-aware, ~11 тэмдэгт/сек cap) |
+| `services/gpu_tts_client.py` | Modal руу `.spawn()` + `get_result()` (seam) |
+| `services/storage_service.py` | **Cloudflare R2** (S3-нийцтэй) — audio хадгалах seam |
+| `services/job_service.py` | Firestore: job + cache + dedup + cache_key |
+| `models/dub_job.py` | DubJob / DubSegment (calls[] = chunk бүрийн call_id) |
 
-## Subtitle + Дуб хоёуланг нэгэн зэрэг харуулах
-
-Энэ бол аппын **гол онцлог**. Хэрэгжүүлэх зарчим:
-
-- Subtitle болон дуб хоёулаа **нэг segment**-аас үүснэ — text, start, duration
-- Subtitle нь хэрэглэгчийн дэлгэцэнд timestamp-тайгаар харагдана
-- Дуб нь яг тэр timestamp-тай sync хийгдэн тоглогдоно
-- Хэрэглэгч subtitle-г унших эсвэл дубыг сонсох — хоёр аргаар хэлийг ойлгоно
-
----
-
-## Суурь зарчмууд
-
-**1. Зорилго нэг — арга олон**
-Transcript, орчуулга, TTS-д ямар API, ямар library ашиглах нь туршилтаар шийдэгдэнэ. Гол нь эцсийн үр дүн: монгол subtitle + дуб хоёулаг ажиллах.
-
-**2. Cache**
-Нэг удаа боловсруулсан видеог хадгална. Дараагийн хэрэглэгч тэр видеог нээхэд шууд авна — дахин боловсруулахгүй.
-
-**3. Хэрэглэгчид саадгүй байх**
-Боловсруулалт нь хэрэглэгчийн харахаас өмнө дуусах ёстой — latency мэдрэгдэхгүй байх нь зорилго.
+### Frontend — `web/src/`
+| Файл | Үүрэг |
+|------|-------|
+| `_comps/dashboard/useProcessedVideo.ts` | Transcript татах (англи caption) |
+| `_comps/dashboard/useDubAudio.ts` | DUB: /jobs үүсгэх, poll, audio_url-ийг синк тоглуулах (1.5× fit) |
+| `_comps/dashboard/useTranslatedSubtitles.ts` | DUB унтарсан үед subtitle орчуулга (/process translate-only) |
+| `lib/dub-job.ts` | `createDubJob` + `pollDubJob` (F5 /jobs client) |
+| `lib/process-stream.ts` | `fetchTranscript` + `streamProcess` (subtitle-only) |
+| `lib/rapid-transcript.ts` | RapidAPI транскрипт (Vercel route-ийн ард) |
 
 ---
 
-## Багийн хуваарилалт
-
-| Хэсэг | Хариуцах |
-|-------|---------|
-| Frontend, UI/UX | Anu, Erkhme, Mugi |
-| Backend, Architecture | Tsengel, Zolo |
+## Хоолой
+- **Preset (male/female):** Modal Volume-д `ref_male.wav` / `ref_female.wav` + `VOICES`-д
+  текст. Frontend-ийн er/em toggle → `voice_ref`.
+- **Voice cloning (cloning):** `ref_audio_b64` дамжуулбал тэр хоолойг клон хийнэ
+  (одоо UI-д холбоогүй; ирээдүйд оригинал илтгэгчийн хоолой).
 
 ---
 
-## Шаардлагатай ENV
+## Setup (хэрэгтэй account / key)
+| Зорилго | Account | Key |
+|---------|---------|-----|
+| Транскрипт | RapidAPI | `RAPIDAPI_KEY` / `NEXT_PUBLIC_RAPID_API_KEY` |
+| Орчуулга | OpenAI | `OPENAI_API_KEY` |
+| GPU TTS | Modal | `modal token` (+ weights Volume-д upload, `modal deploy gpu/f5_modal.py`) |
+| Audio storage | Cloudflare R2 | `R2_ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET/PUBLIC_BASE_URL` |
+| Job store + auth | Firebase | `FIREBASE_*` (Firestore) |
 
-**Backend:**
-```
-OPENAI_API_KEY
-GEMINI_API_KEY
-AZURE_SPEECH_KEY / AZURE_SPEECH_REGION
-FIREBASE_PROJECT_ID
-FIREBASE_CREDENTIALS_JSON
-RAPIDAPI_KEY
-```
+Backend: `cd backend; .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`
+Frontend: `cd web; npm run dev` (→ localhost:3000)
+GPU: `modal deploy gpu/f5_modal.py`
 
-**Frontend:**
-```
-NEXT_PUBLIC_FIREBASE_API_KEY
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-NEXT_PUBLIC_FIREBASE_PROJECT_ID
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-NEXT_PUBLIC_FIREBASE_APP_ID
-NEXT_PUBLIC_BACKEND_URL
-```
+---
+
+## Мэдэгдэж буй tuning зүйлс (дараа)
+- **Чанар:** богино caption хэсгүүдийг F5 training-ийнхээс муу уншдаг. Орчуулгыг
+  товч байлгах + богино segment-үүдийг нэгтгэх нь тусална.
+- **Маш урт видео:** олон chunk → олон cold start (зардал). Chunk хэмжээ / max
+  segment хязгаарыг тааруулж болно (`_CHUNK_SIZE`, `MAX_DUB_SEGMENTS`).
+- **Voice cloning UI:** оригинал илтгэгчийн хоолойг автоматаар (аудио олж авах
+  + diarization) — том ажил.

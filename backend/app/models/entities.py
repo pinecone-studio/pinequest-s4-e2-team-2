@@ -63,6 +63,8 @@ class TranscriptSegmentRecord(BaseModel):
 class VideoTranscriptCache(BaseModel):
     video_id: str = Field(min_length=6, max_length=32)
     source_lang: str = Field(default="en", min_length=2, max_length=12)
+    translation_version: str | None = None
+    translation_mode: str | None = None
     segments: list[TranscriptSegmentRecord]
 
 

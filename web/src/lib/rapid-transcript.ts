@@ -1,100 +1,262 @@
-// Server-side transcript fetch via the RapidAPI "youtube-transcriptor".
+// Server-side transcript fetch via RapidAPI.
 //
-// Used by /api/youtube/transcript.
-//   Example data received:
-// "title": "How I Made This Tiny Walking Robot From Scratch",
-//     "description": "This is Sesame, a little walking robot friend that's super budget friendly. It's powered by eight servo motors and uses an OLED screen on the front to make endearing faces. Sesame may be simple, but its design is pretty smart. This video details how I came up with the Sesame Robot Project, its evolution into an Open-Source project, and a short dive into the tech-stack that makes it work. I spent over four months designing and researching this robot, and I'm super excited to share it.\n\nKit pre-orders are available now!\nhttps://www.doriantodd.com/sesame/kit/\n\nInterested in the design, code, or building your own? Check out the GitHub Repository, where I've poured hours into making high quality documentation that's easy to follow.\nhttps://github.com/dorianborian/sesame-robot/\n\nThank you to PCBway for sponsoring this project! If you need PCBs manufactured, they've got great services available.\nhttps://www.pcbway.com/\n\nThanks for watching. If you like my work and want to see more, check out my website:\nhttps://www.doriantodd.com/",
-//     "availableLangs": [
-//       "en"
-//     ],
-//     "lengthInSeconds": "678",
-//     "thumbnails": [
-//       {
-//         "url": "https://i.ytimg.com/vi/1UDsWkcQZhc/hqdefault.jpg",
-//         "width": 480,
-//         "height": 360
-//       },
-//       {
-//         "url": "https://i.ytimg.com/vi/1UDsWkcQZhc/sddefault.jpg",
-//         "width": 640,
-//         "height": 480
-//       }
-//     ],
-//     "transcription": [
-//       {
-//         "subtitle": "This is Sesame.",
-//         "start": 2.56,
-//         "dur": 7.265
-//       },
-//       {
-//         "subtitle": "Sesame is a robot that can walk around,",
-//         "start": 5.759,
-//         "dur": 6.086
-//       }...
-// RapidAPI host (bare, no scheme) + key. Mirrors the test page's env vars.
-const RAPID_HOST =
-  process.env.RAPID_API_HOST ?? "youtube-transcriptor.p.rapidapi.com";
-const RAPID_KEY = process.env.RAPID_API_KEY ?? "";
+// Used by /api/youtube/transcript. This runs on the Next.js server so the API
+// key stays out of the browser bundle and the client avoids CORS.
 
-// What downstream (the /api/youtube/transcript route → pipeline) consumes.
+const CONFIGURED_RAPID_URL =
+  process.env.RAPIDAPI_URL ??
+  process.env.RAPID_API_URL ??
+  process.env.NEXT_PUBLIC_RAPID_API_URL ??
+  "";
+
+const RAPID_KEY =
+  process.env.RAPIDAPI_KEY ??
+  process.env.RAPID_API_KEY ??
+  process.env.NEXT_PUBLIC_RAPID_API_KEY ??
+  "";
+
+const CONFIGURED_RAPID_HOST =
+  process.env.RAPIDAPI_HOST ?? process.env.RAPID_API_HOST ?? "";
+
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+const RAPID_HOST =
+  CONFIGURED_RAPID_HOST ||
+  hostFromUrl(CONFIGURED_RAPID_URL) ||
+  "video-transcript-scraper.p.rapidapi.com";
+
+function defaultUrlForHost(host: string): string {
+  if (host === "video-transcript-scraper.p.rapidapi.com") {
+    return `https://${host}/transcript/youtube`;
+  }
+  return `https://${host}`;
+}
+
+const RAPID_URL = CONFIGURED_RAPID_URL || defaultUrlForHost(RAPID_HOST);
+
 export type RapidSegment = { start: number; duration: number; text: string };
 
-// ── Response schema (RapidAPI "youtube-transcriptor") ───────────────────────
-// Each transcript item has a `subtitle`, a `start` (seconds), and a `dur`
-// (duration in seconds). Older shapes (text/end/duration) are tolerated so a
-// provider swap doesn't silently produce empty segments.
 type RapidTranscriptItem = {
+  text?: string;
   subtitle?: string;
-  text?: string; // tolerated (older provider used `text`)
+  sentence?: string;
+  line?: string;
   start?: number | string;
+  offset?: number | string;
+  startTime?: number | string;
+  start_time?: number | string;
+  start_ms?: number | string;
+  startMs?: number | string;
+  end?: number | string;
+  endTime?: number | string;
+  end_time?: number | string;
+  end_ms?: number | string;
+  endMs?: number | string;
+  duration?: number | string;
   dur?: number | string;
-  duration?: number | string; // tolerated alias
-  end?: number | string; // tolerated (older provider sent end timestamp)
+  duration_ms?: number | string;
+  durationMs?: number | string;
 };
 
-type RapidVideo = {
-  availableLangs?: string[];
-  lengthInSeconds?: number | string;
-  transcription?: RapidTranscriptItem[];
+type RapidResponse = {
+  status?: string;
+  data?: {
+    video_info?: {
+      selected_language?: string;
+      available_languages?: string[];
+    };
+    transcript?: RapidTranscriptItem[];
+    transcripts?: RapidTranscriptItem[];
+    segments?: RapidTranscriptItem[];
+    captions?: RapidTranscriptItem[];
+  };
+  transcript?: RapidTranscriptItem[];
+  transcripts?: RapidTranscriptItem[];
+  segments?: RapidTranscriptItem[];
+  captions?: RapidTranscriptItem[];
 };
 
-// The provider returns an array of one video object. Tolerate a couple of
-// alternative shapes (bare object, or a flat {transcript:[...]}) just in case.
-type RapidResponse =
-  | RapidVideo[]
-  | (RapidVideo & { transcript?: RapidTranscriptItem[] });
-
-function num(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) {
-    return Number(v);
+function num(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !Number.isNaN(Number(value))
+  ) {
+    return Number(value);
   }
   return undefined;
 }
 
-// Map raw items → clean {start, duration, text}. `dur` is the duration directly;
-// fall back to (end - start) for the older shape; text is the subtitle, with
-// whitespace collapsed and trimmed.
+function millis(value: unknown): number | undefined {
+  const parsed = num(value);
+  return parsed === undefined ? undefined : parsed / 1000;
+}
+
+function firstNum(...values: Array<number | undefined>): number | undefined {
+  return values.find((value) => value !== undefined);
+}
+
+function transcriptItems(
+  body: RapidResponse | RapidTranscriptItem[],
+): RapidTranscriptItem[] {
+  if (Array.isArray(body)) return body;
+  const candidates = [
+    body.data?.transcript,
+    body.data?.transcripts,
+    body.data?.segments,
+    body.data?.captions,
+    body.transcript,
+    body.transcripts,
+    body.segments,
+    body.captions,
+  ];
+  return candidates.find(Array.isArray) ?? [];
+}
+
+function withQuery(url: string, params: Record<string, string>): string {
+  const next = new URL(url);
+  for (const [key, value] of Object.entries(params)) {
+    next.searchParams.set(key, value);
+  }
+  return next.toString();
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.replace(/\/+$/, "")))];
+}
+
+function candidateBaseUrls(): string[] {
+  if (RAPID_HOST === "video-transcript-scraper.p.rapidapi.com") {
+    return [RAPID_URL];
+  }
+  if (CONFIGURED_RAPID_URL) {
+    return [CONFIGURED_RAPID_URL];
+  }
+
+  const root = `https://${RAPID_HOST}`;
+  return unique([
+    root,
+    `${root}/transcript`,
+    `${root}/transcript/youtube`,
+    `${root}/youtube/transcript`,
+    `${root}/api/transcript`,
+    `${root}/get-transcript`,
+  ]);
+}
+
+function candidateRequests(
+  videoId: string,
+): Array<{ url: string; init: RequestInit }> {
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const headers = {
+    "x-rapidapi-key": RAPID_KEY,
+    "x-rapidapi-host": RAPID_HOST,
+    "Content-Type": "application/json",
+  };
+
+  if (RAPID_HOST === "video-transcript-scraper.p.rapidapi.com") {
+    return [
+      {
+        url: RAPID_URL,
+        init: {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ video_url: videoUrl }),
+        },
+      },
+    ];
+  }
+
+  return candidateBaseUrls().flatMap((baseUrl) => [
+    {
+      url: withQuery(baseUrl, { video_id: videoId }),
+      init: { method: "GET", headers },
+    },
+    { url: withQuery(baseUrl, { videoId }), init: { method: "GET", headers } },
+    {
+      url: withQuery(baseUrl, { url: videoUrl }),
+      init: { method: "GET", headers },
+    },
+    {
+      url: baseUrl,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ video_id: videoId }),
+      },
+    },
+    {
+      url: baseUrl,
+      init: { method: "POST", headers, body: JSON.stringify({ videoId }) },
+    },
+    {
+      url: baseUrl,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: videoUrl }),
+      },
+    },
+    {
+      url: baseUrl,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ video_url: videoUrl }),
+      },
+    },
+  ]);
+}
+
 function toSegments(items: RapidTranscriptItem[]): RapidSegment[] {
   const segs: RapidSegment[] = items
-    .map((it) => {
-      const text = String(it.subtitle ?? it.text ?? "")
+    .map((item) => {
+      const text = String(
+        item.text ?? item.subtitle ?? item.sentence ?? item.line ?? "",
+      )
         .replace(/\s+/g, " ")
         .trim();
-      const start = num(it.start) ?? 0;
-      const dur = num(it.dur) ?? num(it.duration);
-      const end = num(it.end);
-      let duration = dur ?? (end !== undefined ? end - start : 0);
+      const start =
+        firstNum(
+          num(item.start),
+          num(item.offset),
+          num(item.startTime),
+          num(item.start_time),
+          millis(item.start_ms),
+          millis(item.startMs),
+        ) ?? 0;
+      const end = firstNum(
+        num(item.end),
+        num(item.endTime),
+        num(item.end_time),
+        millis(item.end_ms),
+        millis(item.endMs),
+      );
+      const explicit = firstNum(
+        num(item.duration),
+        num(item.dur),
+        millis(item.duration_ms),
+        millis(item.durationMs),
+      );
+      let duration = explicit ?? (end !== undefined ? end - start : 0);
       if (!(duration > 0)) duration = 0;
       return { start, duration, text };
     })
-    .filter((s) => s.text.length > 0);
+    .filter((segment) => segment.text.length > 0);
 
-  // Backfill any missing duration from the next segment's start.
-  for (let i = 0; i < segs.length; i++) {
-    if (!segs[i].duration) {
-      const next = segs[i + 1];
-      segs[i].duration = next ? Math.max(0.5, next.start - segs[i].start) : 2;
+  for (let index = 0; index < segs.length; index++) {
+    if (!segs[index].duration) {
+      const next = segs[index + 1];
+      segs[index].duration = next
+        ? Math.max(0.5, next.start - segs[index].start)
+        : 2;
     }
   }
 
@@ -106,48 +268,44 @@ export async function fetchRapidTranscript(
 ): Promise<{ segments: RapidSegment[]; source_lang: string }> {
   if (!RAPID_HOST || !RAPID_KEY) {
     throw new Error(
-      "RapidAPI not configured: set RAPID_API_HOST and RAPID_API_KEY " +
-        "in the server environment.",
+      "RapidAPI not configured: set RAPID_API_KEY and either RAPID_API_URL " +
+        "or RAPID_API_HOST in the server environment.",
     );
   }
 
-  // youtube-transcriptor takes the video_id as a query param (not a URL/body).
-  const endpoint = `https://${RAPID_HOST}/transcript?video_id=${encodeURIComponent(videoId)}&lang=en`;
+  let lastError = "";
+  for (const { url, init } of candidateRequests(videoId)) {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    const path = new URL(url).pathname || "/";
 
-  const res = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      "x-rapidapi-key": RAPID_KEY,
-      "x-rapidapi-host": RAPID_HOST,
-    },
-  });
+    if (!res.ok) {
+      lastError = `RapidAPI ${res.status} (${path}): ${text.slice(0, 300)}`;
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
+        break;
+      }
+      continue;
+    }
 
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`RapidAPI ${res.status}: ${text.slice(0, 300)}`);
+    let body: RapidResponse | RapidTranscriptItem[];
+    try {
+      body = JSON.parse(text) as RapidResponse | RapidTranscriptItem[];
+    } catch {
+      lastError = `RapidAPI ${res.status} (${path}): non-JSON response`;
+      continue;
+    }
+
+    const items = transcriptItems(body);
+    const segments = toSegments(items);
+    if (segments.length) {
+      const source_lang = Array.isArray(body)
+        ? "en"
+        : body.data?.video_info?.selected_language || "en";
+      return { segments, source_lang };
+    }
+
+    lastError = `RapidAPI ${res.status} (${path}): no transcript segments in response`;
   }
 
-  let body: RapidResponse;
-  try {
-    body = JSON.parse(text) as RapidResponse;
-  } catch {
-    throw new Error("RapidAPI returned non-JSON response");
-  }
-
-  // Unwrap the array (or tolerate a bare object / flat shape).
-  const video: RapidVideo & { transcript?: RapidTranscriptItem[] } =
-    Array.isArray(body) ? (body[0] ?? {}) : body;
-
-  const items = video.transcription ?? video.transcript ?? [];
-  const segments = toSegments(items);
-  const source_lang = video.availableLangs?.[0] || "en";
-
-  if (!segments.length) {
-    console.warn(
-      "[rapid-transcript] parsed 0 segments — response keys:",
-      Array.isArray(body) ? "array" : Object.keys(body ?? {}),
-    );
-  }
-
-  return { segments, source_lang };
+  throw new Error(lastError || "RapidAPI transcript request failed");
 }

@@ -18,6 +18,9 @@ mutagen
 # GPU dub: call the Modal F5 app (gpu/f5_modal.py) via the SDK
 modal
 
+# Audio storage: Cloudflare R2 (S3-compatible) via boto3
+boto3
+
 # Audio (duration only — pydub/azure SDK not used; TTS calls Azure REST via httpx)
 mutagen
 

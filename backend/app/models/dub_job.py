@@ -39,7 +39,10 @@ class DubJob(BaseModel):
     voice_ref: str | None = None           # voice identity for caching (None = default)
     status: DubStatus = DubStatus.QUEUED
     progress: int = Field(default=0, ge=0, le=100)
-    call_id: str | None = None             # Modal FunctionCall id to poll
+    call_id: str | None = None             # (legacy single-call; kept for compat)
+    # Chunked GPU calls so audio arrives incrementally. Each item:
+    # {"call_id": str, "indices": [int], "done": bool}
+    calls: list[dict] = []
     segments: list[DubSegment] = []
     error: str | None = None
     created_at: datetime = Field(default_factory=_utc_now)

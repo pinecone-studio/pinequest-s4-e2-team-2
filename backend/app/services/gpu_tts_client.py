@@ -17,16 +17,18 @@ def spawn_synthesis(
     segments: list[dict],
     ref_audio_b64: str | None = None,
     ref_text: str = "",
+    voice: str | None = None,
 ) -> str:
     """Kick off background GPU synthesis for a whole video. Returns a Modal call
     id to poll later with get_result().
 
     segments: [{"index": int, "text": "<mongolian>"}]
+    voice: preset voice key ("male"/"female") for the bundled ref clips.
     """
     import modal
 
     f5 = modal.Cls.from_name(MODAL_APP, MODAL_CLS)
-    call = f5().synthesize_segments.spawn(segments, ref_audio_b64, ref_text)
+    call = f5().synthesize_segments.spawn(segments, ref_audio_b64, ref_text, voice)
     return call.object_id
 
 

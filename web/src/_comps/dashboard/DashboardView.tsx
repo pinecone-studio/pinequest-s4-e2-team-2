@@ -211,6 +211,9 @@ export default function DashboardView({
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState("");
   const playbackRef = useRef({ time: 0, duration: 0 });
+  // Dub "buffer once" gate: while dub is on we hold the video until the current
+  // segment's audio is ready, then release and never auto-pause again.
+  const dubGateReleasedRef = useRef(false);
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchChannelTabs = useChannelTabResults(
     selectedSearchChannel,
@@ -292,7 +295,6 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
-  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender, player.playbackRate);
   // Fetches captions for the selected video (Path A, client-side) and exposes
   // them as `processedSegments` for the SubtitlePane to render.
   const {
@@ -301,12 +303,24 @@ export default function DashboardView({
     error: processingError,
     sourceLang,
   } = useProcessedVideo(videoId);
-  // Translate the fetched captions (no TTS) so subtitles show Mongolian by
-  // default; audio dubbing remains handled by useDubAudio when toggled on.
+  // F5 dub reuses the already-fetched captions (no extra transcript fetch) and
+  // provides BOTH the translated subtitles and the audio when dub mode is on.
+  const dub = useDubAudio(
+    videoId,
+    player.time,
+    dubMode === "mongolian",
+    processedSegments,
+    sourceLang,
+    voiceGender,
+    player.playbackRate,
+  );
+  // Translate-only subtitles (Azure /process, no TTS) ONLY when dub is OFF —
+  // when dub is on, useDubAudio supplies the translated subtitles instead.
   const translatedSubs = useTranslatedSubtitles(
     videoId,
     processedSegments,
     sourceLang,
+    dubMode !== "mongolian",
   );
 
   // CHANGED: derive a staged "process" status + progress for the frame overlay.
@@ -393,23 +407,56 @@ export default function DashboardView({
     }
   }, [dubMode, player.unMute, player.setVolume]);
 
+  // "Buffer once": while dub is on, hold the video until the current segment's
+  // audio is ready, then play and don't auto-pause again — so the dub starts
+  // from the beginning without the video running ahead of the GPU. Once released,
+  // playback stays smooth (synthesis outpaces playback, so it keeps up).
+  useEffect(() => {
+    if (dubMode !== "mongolian") {
+      dubGateReleasedRef.current = false;
+      return;
+    }
+    if (dubGateReleasedRef.current) return; // already buffered → leave it playing
+
+    const seg = dub.audioSegments.find(
+      (s) => player.time >= s.start && player.time < s.start + s.duration,
+    );
+    if (seg?.ready) {
+      dubGateReleasedRef.current = true;
+      player.play();
+    } else if (player.playing) {
+      player.pause(); // buffering: wait for this segment's audio
+    }
+  }, [
+    dubMode,
+    player.time,
+    player.playing,
+    player.play,
+    player.pause,
+    dub.audioSegments,
+  ]);
+
   // Log the caption-fetch lifecycle for the selected video.
   useEffect(() => {
     if (processingError) {
       console.warn("caption fetch failed:", processingError);
     } else if (!processingLoading && processedSegments.length) {
-      console.log(`captions loaded: ${processedSegments.length} segments for ${videoId}`);
+      console.log(
+        `captions loaded: ${processedSegments.length} segments for ${videoId}`,
+      );
     }
   }, [processedSegments, processingLoading, processingError, videoId]);
 
   // Unlock browser autoplay gate on first user interaction, then toggle dub.
   const handleToggleDub = useCallback(() => {
     try {
-      const ctx: AudioContext = new ((window as any).AudioContext ?? (window as any).webkitAudioContext)()
-      void ctx.resume().then(() => ctx.close())
+      const ctx: AudioContext = new (
+        (window as any).AudioContext ?? (window as any).webkitAudioContext
+      )();
+      void ctx.resume().then(() => ctx.close());
     } catch {}
-    setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"))
-  }, [])
+    setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"));
+  }, []);
 
   // Persist the current playback position to watch history (called on a timer,
   // on unmount, and after adding a note).
@@ -738,14 +785,17 @@ export default function DashboardView({
           {!isSearching && searchError && (
             <div className="dashboard-search-status">{searchError}</div>
           )}
-          {!isSearching && searchResults.length > 0 && (
-            selectedSearchChannel ? (
+          {!isSearching &&
+            searchResults.length > 0 &&
+            (selectedSearchChannel ? (
               <ChannelView
                 channel={selectedSearchChannel}
                 results={searchResults}
                 tabResults={searchChannelTabs.tabResults}
                 activeTab={activeSearchChannelTab}
-                isLoading={searchChannelTabs.loadingTab === activeSearchChannelTab}
+                isLoading={
+                  searchChannelTabs.loadingTab === activeSearchChannelTab
+                }
                 error={searchChannelTabs.error}
                 onTabChange={(tab) => {
                   searchChannelTabs.clearError();
@@ -761,8 +811,7 @@ export default function DashboardView({
                 counts={searchCounts}
                 onSelect={selectSearchResult}
               />
-            )
-          )}
+            ))}
         </div>
       )}
       <div className={layoutClassName}>
@@ -808,7 +857,9 @@ export default function DashboardView({
           dubError={dub.error}
           voiceGender={voiceGender}
           onToggleDub={handleToggleDub}
-          onToggleGender={() => setVoiceGender((g) => (g === "male" ? "female" : "male"))}
+          onToggleGender={() =>
+            setVoiceGender((g) => (g === "male" ? "female" : "male"))
+          }
           // CHANGED: staged process overlay status for the frame loadbar
           processStage={processStage}
           processProgress={processProgress}

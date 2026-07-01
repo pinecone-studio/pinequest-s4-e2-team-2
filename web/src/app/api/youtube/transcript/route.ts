@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { fetchCaptions } from "@/lib/captions";
 import { fetchRapidTranscript } from "@/lib/rapid-transcript";
 
 // Fetches the transcript SERVER-SIDE via the RapidAPI scraper (see
@@ -49,15 +50,53 @@ export async function GET(request: NextRequest) {
 
     return Response.json({ video_id: videoId, source_lang, segments });
   } catch (error) {
-    const message =
+    const rapidMessage =
       error instanceof Error ? error.message : "Transcript unavailable.";
     console.error(`${LOG} ✗ RapidAPI fetch failed`, {
       videoId,
       tookMs: Date.now() - startedAt,
-      message,
+      message: rapidMessage,
     });
+
+    try {
+      const fallback = await fetchCaptions(videoId);
+      if (fallback.segments.length) {
+        console.log(`${LOG} → fallback responding 200`, {
+          videoId,
+          source_lang: fallback.languageCode,
+          strategy: fallback.strategy,
+          segmentCount: fallback.segments.length,
+          tookMs: Date.now() - startedAt,
+        });
+        return Response.json({
+          video_id: videoId,
+          source_lang: fallback.languageCode,
+          segments: fallback.segments,
+        });
+      }
+    } catch (fallbackError) {
+      const fallbackMessage =
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : "Fallback transcript unavailable.";
+      console.error(`${LOG} ✗ fallback caption fetch failed`, {
+        videoId,
+        tookMs: Date.now() - startedAt,
+        message: fallbackMessage,
+      });
+      return Response.json(
+        {
+          error: fallbackMessage,
+          videoId,
+          detail: "TranscriptFetchError",
+          rapidApiError: rapidMessage,
+        },
+        { status: 502 },
+      );
+    }
+
     return Response.json(
-      { error: message, videoId, detail: "RapidApiError" },
+      { error: rapidMessage, videoId, detail: "RapidApiError" },
       { status: 502 },
     );
   }

@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { saveCachedVideoTranscript, type Segment } from "@/lib/backend-api";
+import {
+  fetchCachedVideoTranscript,
+  saveCachedVideoTranscript,
+  type CachedTranscriptSegment,
+  type Segment,
+} from "@/lib/backend-api";
 import { fetchTranscript } from "@/lib/process-stream";
 
 // Loads the caption transcript for the selected video and exposes it as Segment[].
@@ -11,6 +16,7 @@ export function useProcessedVideo(videoId: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [sourceLang, setSourceLang] = useState("en");
+  const [translationVersion, setTranslationVersion] = useState<string | null>(null);
 
   useEffect(() => {
     if (!videoId) {
@@ -18,6 +24,7 @@ export function useProcessedVideo(videoId: string) {
         setSegments([]);
         setError("");
         setLoading(false);
+        setTranslationVersion(null);
       });
       return;
     }
@@ -29,11 +36,24 @@ export function useProcessedVideo(videoId: string) {
       setSegments([]);
       setError("");
       setLoading(true);
+      setTranslationVersion(null);
     });
     console.log("[useProcessedVideo] fetching captions for", videoId);
 
     (async () => {
       try {
+        const cached = await fetchCachedVideoTranscript(videoId).catch(() => null);
+        if (cached?.segments.length) {
+          if (!active) return;
+          const mapped = cached.segments.map(toSegment);
+          setSegments(mapped);
+          setSourceLang(cached.source_lang || "en");
+          setTranslationVersion(cached.translation_version ?? null);
+          setLoading(false);
+          console.log(`[useProcessedVideo] loaded ${mapped.length} cached caption segments`);
+          return;
+        }
+
         const transcript = await fetchTranscript(videoId);
         if (!active) return;
 
@@ -43,19 +63,11 @@ export function useProcessedVideo(videoId: string) {
           return;
         }
 
-        const mapped: Segment[] = transcript.segments.map((s) => ({
-          start: s.start,
-          duration: s.duration,
-          text: s.text,
-          source: "youtube_captions",
-          translated_text: null,
-          audio_path: null,
-          audio_ms: null,
-          audio_b64: null,
-        }));
+        const mapped: Segment[] = transcript.segments.map(toSegment);
 
         setSegments(mapped);
         setSourceLang(transcript.source_lang || "en");
+        setTranslationVersion(null);
         setLoading(false);
         void saveCachedVideoTranscript({
           video_id: videoId,
@@ -77,5 +89,18 @@ export function useProcessedVideo(videoId: string) {
     };
   }, [videoId]);
 
-  return { segments, loading, error, sourceLang };
+  return { segments, loading, error, sourceLang, translationVersion };
+}
+
+function toSegment(segment: CachedTranscriptSegment): Segment {
+  return {
+    start: segment.start,
+    duration: segment.duration,
+    text: segment.text,
+    source: "youtube_captions",
+    translated_text: segment.translated_text ?? null,
+    audio_path: null,
+    audio_ms: null,
+    audio_b64: null,
+  };
 }

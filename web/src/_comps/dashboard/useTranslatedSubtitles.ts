@@ -16,13 +16,16 @@ export function useTranslatedSubtitles(
   videoId: string,
   sourceSegments: Segment[],
   sourceLang: string = "en",
+  enabled: boolean = true,
 ) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!videoId || sourceSegments.length === 0) {
+    // When dub mode is on, useDubAudio (F5 /jobs) provides the translated
+    // subtitles, so this Azure /process translate-only path stays idle.
+    if (!enabled || !videoId || sourceSegments.length === 0) {
       setSegments([]);
       setLoading(false);
       setError("");
@@ -87,7 +90,7 @@ export function useTranslatedSubtitles(
       active = false;
       controller.abort();
     };
-  }, [videoId, sourceSegments, sourceLang]);
+  }, [videoId, sourceSegments, sourceLang, enabled]);
 
   return { segments, loading, error };
 }

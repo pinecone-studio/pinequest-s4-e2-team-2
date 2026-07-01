@@ -90,6 +90,12 @@ export function VideoPane(props: VideoPaneProps) {
 
   const sortedNotes = [...props.notes].sort((a, b) => a.time - b.time)
   const isLoading = props.dubStatus === "fetching" || props.dubStatus === "translating" || props.dubStatus === "tts"
+  // While the video is being processed (captions → translate → dub), the dub
+  // toggle is temporarily disabled — you can only flip it once things settle.
+  const isProcessing =
+    props.processStage === "fetching" ||
+    props.processStage === "translating" ||
+    props.processStage === "dubbing"
   const isError = props.dubStatus === "error"
   const isMongolian = props.dubMode === "mongolian"
   const showProcess =
@@ -147,7 +153,7 @@ export function VideoPane(props: VideoPaneProps) {
           <div className="dub-panel-row">
             <button
               onClick={props.onToggleDub}
-              disabled={isLoading || props.dubAvailable === false}
+              disabled={isLoading || isProcessing || props.dubAvailable === false}
               className={[
                 "dub-main-btn",
                 isMongolian && !isError ? "is-active" : "",

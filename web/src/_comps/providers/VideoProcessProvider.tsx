@@ -103,7 +103,9 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   const [selectedVideo, setSelectedVideo] = useState<VideoSelection | null>(
     null,
   );
-  const [dubMode, setDubMode] = useState<DubMode>("original");
+  // Dub is ON by default — selecting a video should translate + dub in one pass
+  // (the subtitle-only translate path stays idle while dubbing, see below).
+  const [dubMode, setDubMode] = useState<DubMode>("mongolian");
   const [voiceGender, setVoiceGender] = useState<VoiceGender>("male");
 
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);

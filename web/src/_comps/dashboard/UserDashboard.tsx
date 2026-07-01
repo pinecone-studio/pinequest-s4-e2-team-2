@@ -23,8 +23,9 @@ export default function UserDashboard() {
     processProgress,
     dubMode,
     toggleDub,
-    voiceGender,
-    toggleGender,
+    voices,
+    selectedVoiceId,
+    selectVoice,
     dub,
     cancel,
   } = useVideoProcess();
@@ -77,6 +78,9 @@ export default function UserDashboard() {
             dubProgress={dub.progress}
             dubError={dub.error}
             onToggleDub={toggleDub}
+            voices={voices}
+            selectedVoiceId={selectedVoiceId}
+            onSelectVoice={selectVoice}
             processStage={processStage}
             processProgress={processProgress}
           />

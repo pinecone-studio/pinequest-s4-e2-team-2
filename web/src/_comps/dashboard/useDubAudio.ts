@@ -1,8 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchTranscript, streamProcess, base64ToBlobUrl, type StreamedSegment } from "@/lib/process-stream"
+import { streamProcess, base64ToBlobUrl, type StreamedSegment } from "@/lib/process-stream"
 import type { Segment } from "@/lib/backend-api"
+import { VOICES } from "./voices"
 
 export type DubStep = "idle" | "fetching" | "translating" | "tts" | "ready" | "error"
 
@@ -24,6 +25,8 @@ export function useDubAudio(
   currentTime: number,
   playing: boolean,
   enabled: boolean,
+  sourceSegments: Segment[],
+  sourceLang: string,
   voiceId: string,
   playbackRate: number = 1,
   volume: number = 100,
@@ -38,6 +41,11 @@ export function useDubAudio(
   const abortRef = useRef<AbortController | null>(null)
   const blobUrlsRef = useRef<string[]>([])
   const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Key (`videoId::voiceId`) of the dub already built. Toggling the dub off/on
+  // must NOT re-run the /process translate+TTS pipeline — only a new video or
+  // voice should rebuild. Set once a build COMPLETES; cleared on failure so a
+  // retry can rebuild.
+  const builtKeyRef = useRef<string>("")
 
   const stopAllAudio = useCallback(() => {
     activeAudiosRef.current.forEach((audio) => {
@@ -79,33 +87,46 @@ export function useDubAudio(
 
   // Fetch transcript + stream translate/TTS when enabled or voice changes
   useEffect(() => {
-    if (!videoId || !enabled) return
+    // Reuse the captions already fetched by useProcessedVideo — no second
+    // transcript fetch. Wait until they've arrived before building the dub.
+    if (!videoId || !enabled || sourceSegments.length === 0) return
+
+    // Already built this video+voice → reuse it. This is what makes the dub
+    // toggle a pure on/off switch instead of a "re-translate" trigger.
+    const buildKey = `${videoId}::${voiceId}`
+    if (builtKeyRef.current === buildKey) return
 
     stopAllAudio()
     lastStartedIdxRef.current = -1
     abortRef.current?.abort()
     setSegments([])
     setError(null)
-    setStep("fetching")
-    setProgress(null)
+    setStep("translating")
+    setProgress({ done: 0, total: sourceSegments.length })
 
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Backend picks the Azure voice by gender (Bataa=male, Yesui=female).
+    const gender = VOICES.find((v) => v.id === voiceId)?.gender ?? "female"
+
     void (async () => {
       try {
-        const transcript = await fetchTranscript(videoId, controller.signal)
-        if (controller.signal.aborted) return
-
-        const total = transcript.segments.length
         const built: DubSegment[] = []
-        setStep("translating")
-        setProgress({ done: 0, total })
 
         let ttsCompleted = 0
 
         await streamProcess(
-          { video_id: videoId, source_lang: transcript.source_lang, segments: transcript.segments, voice: voiceId },
+          {
+            video_id: videoId,
+            source_lang: sourceLang,
+            segments: sourceSegments.map((s) => ({
+              start: s.start,
+              duration: s.duration,
+              text: s.text,
+            })),
+            gender,
+          },
           {
             onSegment: (seg: StreamedSegment, index: number, segTotal: number) => {
               if (controller.signal.aborted) return
@@ -142,8 +163,10 @@ export function useDubAudio(
               if (blobUrlsRef.current.length === 0) {
                 setError("Azure TTS audio uusgej chadsangui. Backend credentials shalgana uu.")
                 setStep("error")
+                builtKeyRef.current = "" // failed → allow a rebuild on retry
               } else {
                 setStep("ready")
+                builtKeyRef.current = buildKey // built → toggling won't re-run /process
               }
               setProgress(null)
             },
@@ -152,6 +175,7 @@ export function useDubAudio(
               setError(msg)
               setStep("error")
               setProgress(null)
+              builtKeyRef.current = "" // failed → allow a rebuild on retry
             },
           },
           controller.signal,
@@ -161,6 +185,7 @@ export function useDubAudio(
         setError(err instanceof Error ? err.message : "Дуб бэлдэхэд алдаа гарлаа")
         setStep("error")
         setProgress(null)
+        builtKeyRef.current = "" // failed → allow a rebuild on retry
       }
     })()
 
@@ -169,19 +194,17 @@ export function useDubAudio(
       if (abortRef.current === controller) abortRef.current = null
       if (flushRef.current) clearTimeout(flushRef.current)
     }
-  }, [videoId, enabled, voiceId, stopAllAudio])
+  }, [videoId, enabled, sourceSegments, sourceLang, voiceId, stopAllAudio])
 
   // Pause (but DON'T discard) the dub when the user switches back to the original
   // audio, so re-enabling plays instantly from the already-built segments. The
   // background build is left running/complete and its blobs are kept alive.
   useEffect(() => {
     if (enabled) return
+    // Turning dub OFF: stop playback but KEEP the built segments + "ready" state,
+    // so toggling back ON replays instantly without re-running /process.
     stopAllAudio()
     lastStartedIdxRef.current = -1
-    setSegments([])
-    setError(null)
-    setProgress(null)
-    setStep("idle")
   }, [enabled, stopAllAudio])
 
   // Apply playback rate changes to currently playing audio

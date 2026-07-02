@@ -46,6 +46,10 @@ export async function createDubJob(
     source_lang: string;
     segments: TranscriptSegment[];
     voice_ref?: string; // preset voice ("male"/"female")
+    ref_audio_b64?: string; // RAW audio bytes, byte 0 through ref_start+ref_duration
+    ref_text?: string;
+    ref_start?: number; // where in ref_audio_b64 the clean reference window begins
+    ref_duration?: number;
   },
   signal?: AbortSignal,
 ): Promise<DubJob> {

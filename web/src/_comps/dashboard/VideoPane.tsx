@@ -7,10 +7,6 @@ import { VideoFrame } from "./VideoFrame"
 import type { DubStep } from "./useDubAudio"
 import type { Voice } from "./voices"
 
-function genderLabel(gender: "male" | "female"): string {
-  return gender === "male" ? "Эрэгтэй" : "Эмэгтэй"
-}
-
 export type ProcessStage =
   | "idle"
   | "fetching"
@@ -342,8 +338,8 @@ export function VideoPane(props: VideoPaneProps) {
                       <>
                         {props.voices && props.onSelectVoice && (
                           <div className="settings-section">
-                            <span className="settings-section-label">ХҮЙС</span>
-                            <div className="dub-voice-picker" role="group" aria-label="Хүйс сонгох">
+                            <span className="settings-section-label">ХООЛОЙ</span>
+                            <div className="dub-voice-picker" role="group" aria-label="Хоолой сонгох">
                               {props.voices.map((v) => (
                                 <button
                                   key={v.id}
@@ -353,7 +349,8 @@ export function VideoPane(props: VideoPaneProps) {
                                   aria-pressed={props.selectedVoiceId === v.id}
                                 >
                                   <span className="dub-voice-gender" aria-hidden>{v.gender === "male" ? "♂" : "♀"}</span>
-                                  <span className="dub-voice-name">{genderLabel(v.gender)}</span>
+                                  <span className="dub-voice-name">{v.name}</span>
+                                  <span className="dub-voice-provider">{v.provider === "f5" ? "F5" : "Azure"}</span>
                                 </button>
                               ))}
                             </div>

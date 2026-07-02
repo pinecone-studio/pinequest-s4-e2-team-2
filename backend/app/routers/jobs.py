@@ -50,6 +50,11 @@ class CreateJobRequest(BaseModel):
     voice_ref: str | None = None       # voice identity (None = default fixed voice)
     ref_audio_b64: str | None = None   # optional reference clip for voice cloning
     ref_text: str = ""                 # transcript of the ref ("" → auto via Whisper)
+    # ref_audio_b64 is a RAW prefix (byte 0 through ref_start+ref_duration) —
+    # compressed audio can only be decoded from its container header at byte 0.
+    # The GPU side trims the exact window with ffmpeg. None → already trimmed.
+    ref_start: float | None = None
+    ref_duration: float | None = None
     # Optional: supply transcript directly to skip the RapidAPI fetch
     # (client already has it, or for testing). [{start, duration, text}]
     segments: list[dict] | None = None
@@ -76,6 +81,8 @@ def create_job(
             voice_ref=req.voice_ref,
             ref_audio_b64=req.ref_audio_b64,
             ref_text=req.ref_text,
+            ref_start=req.ref_start,
+            ref_duration=req.ref_duration,
             segments=req.segments,
             source_lang=req.source_lang,
         )

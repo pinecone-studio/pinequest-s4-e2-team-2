@@ -6,6 +6,11 @@ import {
   base64ToBlobUrl,
   type StreamedSegment,
 } from "@/lib/process-stream";
+import {
+  createDubJob,
+  pollDubJob,
+  type DubJob,
+} from "@/lib/dub-job";
 import type { Segment } from "@/lib/backend-api";
 import { VOICES } from "./voices";
 
@@ -27,9 +32,9 @@ type DubSegment = {
 
 const MAX_OVERLAPPING_DUB_AUDIO = 2;
 
-// Azure TTS streaming dub. Reuses captions already fetched by useProcessedVideo,
-// sends them to the backend /process pipeline (translate + TTS), and plays each
-// segment's audio synced to the video.
+// Azure/F5 dub. Reuses captions already fetched by useProcessedVideo, sends
+// them to the backend (Azure /process SSE, or F5's async /jobs), and plays
+// each segment's audio synced to the video.
 export function useDubAudio(
   videoId: string,
   currentTime: number,
@@ -198,11 +203,75 @@ export function useDubAudio(
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Backend picks the Azure voice by gender (Bataa=male, Yesui=female).
-    const gender = VOICES.find((v) => v.id === voiceId)?.gender ?? "female";
+    const selectedVoice = VOICES.find((v) => v.id === voiceId) ?? VOICES[0]!;
+    const transcriptSegments = sourceSegments.map((s) => ({
+      start: s.start,
+      duration: s.duration,
+      text: s.text,
+    }));
+
+    const applyF5Job = (job: DubJob) => {
+      const mapped = job.segments
+        .map((seg) => ({
+          start: seg.start,
+          duration: seg.duration,
+          translatedText: seg.translated_text ?? null,
+          blobUrl: seg.audio_url,
+          audioMs: seg.audio_ms ?? 0,
+        }))
+        .sort((a, b) => a.start - b.start);
+      const ready = mapped.filter((seg) => seg.blobUrl).length;
+      setSegments(mapped);
+      setProgress({ done: ready, total: mapped.length || total });
+      if (ready > 0) setStep("tts");
+    };
 
     void (async () => {
       try {
+        if (selectedVoice.provider === "f5") {
+          // Cloning the ORIGINAL speaker's voice from the source video was
+          // tried (pick a ~10s window via pick-ref-window.ts, fetch it via
+          // /api/youtube/audio-ref) and the plumbing works, but the result is
+          // unintelligible whenever the source isn't already Mongolian: F5's
+          // duration heuristic is UTF-8-byte-based (fixed, see gpu/f5_modal.py
+          // fix_duration), but cross-script reference conditioning (Latin/other
+          // ref audio + Cyrillic gen text) still comes out garbled even with
+          // duration fixed — this checkpoint was fine-tuned Mongolian-only.
+          // Verified 2026-07-02. Until that's solved, always use the bundled
+          // Mongolian preset voice — it's the only one that reads cleanly.
+          const job = await createDubJob(
+            {
+              video_id: videoId,
+              source_lang: sourceLang,
+              segments: transcriptSegments,
+              voice_ref: selectedVoice.voiceRef ?? selectedVoice.id,
+            },
+            controller.signal,
+          );
+          applyF5Job(job);
+          if (!job.id) throw new Error("Dub job id missing.");
+          setStep("tts");
+
+          const finalJob = await pollDubJob(job.id, {
+            signal: controller.signal,
+            intervalMs: 2500,
+            onUpdate: applyF5Job,
+          });
+          if (controller.signal.aborted) return;
+          applyF5Job(finalJob);
+          if (finalJob.status === "failed") {
+            throw new Error(finalJob.error || "F5 dub failed.");
+          }
+          const hasAudio = finalJob.segments.some((seg) => seg.audio_url);
+          if (!hasAudio) {
+            throw new Error("F5 audio uusgej chadsangui. Modal/R2 tohirgoo shalgana uu.");
+          }
+          setStep("ready");
+          setProgress(null);
+          builtKeyRef.current = buildKey;
+          return;
+        }
+
         const built: DubSegment[] = [];
         let ttsCompleted = 0;
 
@@ -210,13 +279,9 @@ export function useDubAudio(
           {
             video_id: videoId,
             source_lang: sourceLang,
-            segments: sourceSegments.map((s) => ({
-              start: s.start,
-              duration: s.duration,
-              text: s.text,
-            })),
-            voice: voiceId,
-            gender,
+            segments: transcriptSegments,
+            gender: selectedVoice.gender,
+            voice: selectedVoice.id,
           },
           {
             onSegment: (
@@ -536,7 +601,11 @@ export function useDubAudio(
     }));
 
   const audioSegments: { start: number; duration: number; ready: boolean }[] =
-    [];
+    segments.map((s) => ({
+      start: s.start,
+      duration: s.duration,
+      ready: Boolean(s.blobUrl),
+    }));
   return {
     step,
     error,

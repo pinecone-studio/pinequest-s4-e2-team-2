@@ -27,12 +27,13 @@ VOCAB_PATH = "/weights/mn_vocab.txt"
 # ref_male.wav is also the fallback for any voice without its own preset.
 DEFAULT_REF_AUDIO = "/weights/ref_male.wav"
 # Exact transcript of the reference clip (Whisper mis-reads Mongolian, so set it).
+# Verified 2026-07-02: this clip + fix_duration gives clean, intelligible output
+# (clone_test_v4_mn_fixdur.wav) — the production default until a per-video clone
+# is worth revisiting (see useDubAudio.ts note on cross-lingual cloning).
 _MALE_REF_TEXT = (
-    "Орлого шогийн хярд зайдууд зусаж буй үхэрчин Санжжав гуайн усан дээр "
-    "тааралдтал, Халиун сумын харьяат Гавж хөгшнийг Баянуул суманд нутаг зааж, "
-    "хярын мухарт хуц ухна маллуулахаар суулгасан төдийгүй, нутгийн ардтай "
-    "харьцаанд орвол буцаад ял авч шоронд орох сануулгатай тухайн сонин болгон "
-    "ярьж байна."
+    "Сайн байцгаана уу, киночид оо. Өнөөдөр та бүхэнд мянга есөн зуун ерэн хоёр "
+    "онд нээлтээ хийсэн гол дүрд нь Жеки Чан тоглосон супер поп киног ярьж "
+    "өгөхөөр бэлдлээ."
 )
 DEFAULT_REF_TEXT = _MALE_REF_TEXT
 
@@ -86,25 +87,49 @@ class F5:
         ref_audio_b64: str | None = None,
         ref_text: str = "",
         voice: str | None = None,
+        ref_start: float | None = None,
+        ref_duration: float | None = None,
     ) -> list[dict]:
         """Synthesize a whole video's segments in one GPU session.
 
         segments: [{"index": int, "text": "<mongolian>"}]
         ref_audio_b64: optional per-video reference clip (voice cloning).
+        ref_start/ref_duration: when set, ref_audio_b64 is a RAW undecoded
+        prefix (byte 0 through ref_start+ref_duration) — compressed audio can
+        only be decoded from its container header at byte 0, so the caller
+        can't pre-trim client-side. We ffmpeg-trim the exact window here.
         voice: preset voice key ("male"/"female") → bundled ref clip.
         Priority: ref_audio_b64 > voice preset > DEFAULT.
         Returns: [{"index": int, "audio_b64": "<wav>", "audio_ms": int}]
         """
         import base64
         import io
+        import subprocess
 
         import soundfile as sf
 
         # Resolve the reference voice once for the whole batch.
         if ref_audio_b64:
-            ref_path = "/tmp/ref.wav"
-            with open(ref_path, "wb") as f:
-                f.write(base64.b64decode(ref_audio_b64))
+            raw_bytes = base64.b64decode(ref_audio_b64)
+            if ref_start is not None and ref_duration is not None:
+                raw_path = "/tmp/ref_raw.bin"
+                with open(raw_path, "wb") as f:
+                    f.write(raw_bytes)
+                ref_path = "/tmp/ref.wav"
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", raw_path,
+                        "-ss", str(ref_start), "-t", str(ref_duration),
+                        "-ac", "1", "-ar", "24000",
+                        ref_path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                ref_path = "/tmp/ref.wav"
+                with open(ref_path, "wb") as f:
+                    f.write(raw_bytes)
             ref_text_used = ref_text or ""  # "" → Whisper auto-transcribe
         elif voice and voice in VOICES:
             ref_path = VOICES[voice]["audio"]
@@ -112,6 +137,22 @@ class F5:
         else:
             ref_path = DEFAULT_REF_AUDIO
             ref_text_used = DEFAULT_REF_TEXT
+
+        # F5's own duration heuristic (`ref_audio_len * gen_bytes / ref_bytes`,
+        # UTF-8 BYTE length) only breaks when ref_text and gen_text are
+        # different scripts (Latin ref + Cyrillic gen inflated duration ~2x —
+        # see git history). ref_text is now ALWAYS the bundled Mongolian
+        # preset and gen_text is always Mongolian too, so the byte ratio is
+        # valid again and we let F5 pick its own natural pace.
+        #
+        # We tried forcing fix_duration = the ORIGINAL (source-language)
+        # segment's caption duration for A/V sync, but that stretches speech
+        # into an unnaturally slow drawl whenever natural Mongolian speech
+        # (translate_timed already aims to fit the slot, but imperfectly) is
+        # shorter than the source caption's timing — confirmed on the
+        # dashboard 2026-07-02. The client already speeds up audio that runs
+        # LONG for its slot (useDubAudio.ts, capped at 1.35x); that one-sided
+        # safety net is enough — don't fight it by forcing elongation here.
 
         results: list[dict] = []
         for seg in segments:
@@ -124,8 +165,9 @@ class F5:
                 ref_file=ref_path,
                 ref_text=ref_text_used,
                 gen_text=text,
-                nfe_step=40,        # more denoising steps → smoother, less robotic (default 32)
-                cfg_strength=1.8,   # lower → less over-emphasized/robotic (default 2.0)
+                nfe_step=48,        # more denoising steps → smoother, less robotic (default 32)
+                cfg_strength=1.5,   # lower → less over-emphasized/robotic monotone (default 2.0)
+                speed=1.08,         # mild pace boost, mirrors Azure's static +30% rate boost
             )
             buf = io.BytesIO()
             sf.write(buf, wav, sr, format="WAV")
@@ -146,3 +188,43 @@ def smoke_test():
         [{"index": 0, "text": "Энэ бол монгол хэл дээрх туршилт юм."}]
     )
     print("segments:", len(out), "audio_ms:", out[0]["audio_ms"] if out else None)
+
+
+@app.local_entrypoint()
+def test_clone(
+    ref_path: str,
+    ref_text: str = "",
+    gen_text: str = "Сайн байна уу, энэ бол миний хоолойгоор орчуулсан жишээ юм.",
+    out: str = "clone_test.wav",
+    ref_start: float = -1,
+    ref_duration: float = -1,
+):
+    """Test voice cloning with a custom reference clip (e.g. a clip cut from a
+    YouTube video). Writes the synthesized Mongolian audio to `out` locally.
+
+    ref_text="" lets f5-tts auto-transcribe the reference via Whisper — fine
+    when the reference clip itself is NOT Mongolian (Whisper only mis-reads
+    Mongolian; other languages transcribe fine).
+
+    Pass --ref-start/--ref-duration to test the ffmpeg-trim path (ref_path is
+    then a RAW untrimmed prefix, e.g. what lib/audio-ref.ts downloads) instead
+    of an already-trimmed clip.
+
+        modal run gpu/f5_modal.py::test_clone --ref-path "C:/path/clip.mp3"
+    """
+    import base64
+
+    with open(ref_path, "rb") as f:
+        ref_audio_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    result = F5().synthesize_segments.remote(
+        [{"index": 0, "text": gen_text}],
+        ref_audio_b64=ref_audio_b64,
+        ref_text=ref_text,
+        ref_start=ref_start if ref_start >= 0 else None,
+        ref_duration=ref_duration if ref_duration >= 0 else None,
+    )
+    seg = result[0]
+    with open(out, "wb") as f:
+        f.write(base64.b64decode(seg["audio_b64"]))
+    print(f"Saved {out} ({seg['audio_ms']}ms)")

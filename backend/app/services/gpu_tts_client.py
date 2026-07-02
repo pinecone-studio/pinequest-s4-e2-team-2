@@ -30,11 +30,16 @@ def spawn_synthesis(
     segments: list[dict],
     ref_audio_b64: str | None = None,
     ref_text: str = "",
+    ref_start: float | None = None,
+    ref_duration: float | None = None,
     voice: str | None = None,
 ) -> str:
     """Kick off synthesis for a chunk. Returns a call id to poll with get_result().
 
     segments: [{"index": int, "text": "<mongolian>"}]
+    ref_start/ref_duration: when set, ref_audio_b64 is a RAW undecoded prefix
+    (byte 0 through ref_start+ref_duration) and the GPU side must ffmpeg-trim
+    it to that exact window before using it as the F5 reference.
 
     Modal available  → spawns F5 GPU job, returns Modal call id.
     Modal not installed → synthesises with Azure TTS synchronously, returns a
@@ -43,7 +48,9 @@ def spawn_synthesis(
     if _modal_available():
         import modal
         f5 = modal.Cls.from_name(MODAL_APP, MODAL_CLS)
-        call = f5().synthesize_segments.spawn(segments, ref_audio_b64, ref_text)
+        call = f5().synthesize_segments.spawn(
+            segments, ref_audio_b64, ref_text, voice, ref_start, ref_duration
+        )
         return call.object_id
 
     logger.info("Modal not available — Azure TTS fallback for %d segments", len(segments))

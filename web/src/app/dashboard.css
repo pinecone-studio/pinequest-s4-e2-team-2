@@ -1458,6 +1458,17 @@
   text-shadow: 0 0 6px rgba(80, 180, 100, 0.35);
 }
 
+.dub-voice-provider {
+  font: 700 9px/1 Arial, sans-serif;
+  color: #58685c;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-panel .dub-voice-card.is-selected .dub-voice-provider {
+  color: #8aa088;
+}
+
 /* Ready / error labels */
 .dub-ready-text {
   margin: 0;

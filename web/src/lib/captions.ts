@@ -34,7 +34,10 @@ export type CaptionResult = {
 // ── InnerTube client config (matches a real ANDROID app request) ────────────
 const INNERTUBE_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
 const INNERTUBE_CLIENT_VERSION = "20.10.38";
-const INNERTUBE_UA = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
+// Exported: googlevideo CDN format URLs obtained via the ANDROID client must
+// be fetched with a matching User-Agent, or they 403 (seen empirically with
+// the reference-audio fetch in lib/audio-ref.ts).
+export const INNERTUBE_UA = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
 
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -51,6 +54,14 @@ type CaptionTrack = {
   kind?: string; // "asr" for auto-generated
 };
 
+export type AdaptiveFormat = {
+  itag: number;
+  mimeType: string;
+  bitrate?: number;
+  url?: string;
+  approxDurationMs?: string;
+};
+
 type PlayerResponse = {
   playabilityStatus?: {
     status?: string;
@@ -61,7 +72,34 @@ type PlayerResponse = {
       captionTracks?: CaptionTrack[];
     };
   };
+  streamingData?: {
+    adaptiveFormats?: AdaptiveFormat[];
+  };
 };
+
+// Fetches the raw InnerTube ANDROID player response for a video. The ANDROID
+// client returns direct (uncipered) format URLs — no signature decryption
+// needed, unlike the WEB client. Shared by caption fetching (captions[]) and
+// reference-audio extraction (streamingData.adaptiveFormats).
+export async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse> {
+  const res = await fetch(INNERTUBE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "User-Agent": INNERTUBE_UA },
+    body: JSON.stringify({
+      context: { client: { clientName: "ANDROID", clientVersion: INNERTUBE_CLIENT_VERSION } },
+      videoId,
+    }),
+  });
+  if (!res.ok) throw new Error(`player API HTTP ${res.status}`);
+
+  const data = (await res.json()) as PlayerResponse;
+  const status = data?.playabilityStatus?.status;
+  if (status && status !== "OK") {
+    const reason = data?.playabilityStatus?.reason ?? "";
+    throw new Error(`not playable: ${status}${reason ? ` (${reason})` : ""}`);
+  }
+  return data;
+}
 
 // ── Public entry point ──────────────────────────────────────────────────────
 
@@ -159,22 +197,7 @@ function decodeEntities(text: string): string {
 // ── Strategy 1: InnerTube ANDROID player API ────────────────────────────────
 
 async function viaInnertube(videoId: string, lang: string): Promise<CaptionResult> {
-  const res = await fetch(INNERTUBE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": INNERTUBE_UA },
-    body: JSON.stringify({
-      context: { client: { clientName: "ANDROID", clientVersion: INNERTUBE_CLIENT_VERSION } },
-      videoId,
-    }),
-  });
-  if (!res.ok) throw new Error(`player API HTTP ${res.status}`);
-
-  const data = (await res.json()) as PlayerResponse;
-  const status = data?.playabilityStatus?.status;
-  if (status && status !== "OK") {
-    const reason = data?.playabilityStatus?.reason ?? "";
-    throw new Error(`not playable: ${status}${reason ? ` (${reason})` : ""}`);
-  }
+  const data = await fetchPlayerResponse(videoId);
 
   const tracks: CaptionTrack[] | undefined =
     data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;

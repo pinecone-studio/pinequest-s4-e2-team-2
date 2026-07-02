@@ -50,6 +50,8 @@ def start_dub(
     voice_ref: str | None = None,
     ref_audio_b64: str | None = None,
     ref_text: str = "",
+    ref_start: float | None = None,
+    ref_duration: float | None = None,
     segments: list[dict] | None = None,
     source_lang: str = "en",
 ) -> DubJob:
@@ -106,6 +108,8 @@ def start_dub(
             [{"index": d.index, "text": d.translated_text or ""} for d in chunk],
             ref_audio_b64=ref_audio_b64,
             ref_text=ref_text,
+            ref_start=ref_start,
+            ref_duration=ref_duration,
             voice=voice_ref,
         )
         calls.append({"call_id": call_id, "indices": [d.index for d in chunk], "done": False})

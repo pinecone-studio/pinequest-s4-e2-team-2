@@ -1108,6 +1108,86 @@
   text-transform: uppercase;
 }
 
+/* YouTube-style settings list row (e.g. "ХООЛОЙ  Батаа >") that drills into
+   a submenu replacing the panel content — see VideoPane's voiceMenuOpen. */
+.settings-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: calc(100% + 12px);
+  box-sizing: border-box;
+  background: none;
+  border: none;
+  padding: 8px 10px;
+  margin: -4px -6px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.settings-menu-row:hover:not(:disabled) {
+  background: rgba(60, 140, 80, 0.1);
+}
+
+.dark .settings-menu-row:hover:not(:disabled) {
+  background: rgba(120, 200, 130, 0.12);
+}
+
+.settings-menu-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.settings-menu-row-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 12px/1 var(--font-onest), Arial, sans-serif;
+  color: #3a5a40;
+}
+
+.settings-menu-row-value svg {
+  color: #7a908063;
+}
+
+.dark .settings-panel .settings-menu-row-value {
+  color: #b8ccb4;
+}
+
+/* Back row at the top of a drilled-in submenu. */
+.settings-back-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% + 12px);
+  box-sizing: border-box;
+  background: none;
+  border: none;
+  padding: 6px 10px 8px;
+  margin: -4px -6px 4px;
+  cursor: pointer;
+  color: inherit;
+  border-bottom: 1px solid rgba(26, 40, 32, 0.12);
+  border-radius: 8px 8px 0 0;
+  transition: background 0.15s ease;
+}
+
+.settings-back-row:hover {
+  background: rgba(60, 140, 80, 0.1);
+}
+
+.dark .settings-back-row {
+  border-bottom-color: rgba(140, 180, 140, 0.18);
+}
+
+.dark .settings-back-row:hover {
+  background: rgba(120, 200, 130, 0.12);
+}
+
 .settings-row {
   display: flex;
   align-items: center;
@@ -1523,19 +1603,25 @@
   user-select: none;
 }
 
-/* Voice picker */
+/* Voice picker — stacked list (one voice per row) so it always fits the
+   240px settings-panel regardless of how many voices/providers exist; a
+   horizontal flex:1 row overflowed once a 3rd (F5) voice + provider badge
+   was added. Matches the YouTube submenu look (vertical option list). */
 .dub-voice-picker {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .dub-voice-card {
-  flex: 1;
-  display: inline-flex;
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 7px 10px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(26, 40, 32, 0.12);
   border-radius: 7px;
@@ -1545,6 +1631,25 @@
     background 0.2s ease,
     transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.2s ease;
+}
+
+.dub-voice-card .dub-voice-provider {
+  margin-left: auto;
+}
+
+/* Fixed-width leading column so the selected voice's Check icon doesn't shift
+   the gender/name of unselected rows (YouTube keeps the check gutter reserved). */
+.dub-voice-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+  color: #2a8a3a;
+}
+
+.dark .settings-panel .dub-voice-check {
+  color: #7ee87e;
 }
 
 .settings-panel .dub-voice-card:hover:not(:disabled) {

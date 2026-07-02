@@ -20,8 +20,16 @@ _COLLECTION = "dub_jobs"
 _ACTIVE = (DubStatus.QUEUED.value, DubStatus.PROCESSING.value)
 
 
+# Bump to invalidate ALL cached dubs after a synthesis-quality change (they're
+# keyed by inputs only, so better output for the same inputs never replaces a
+# cached job otherwise). v2: F5 fix_duration removed + speed/nfe/cfg retuned.
+# v3: per-sentence synthesis with breath pauses at full stops + bracket-tag
+# stripping — earlier audio is run-on speech and must not be served.
+_CACHE_VERSION = "v3"
+
+
 def make_cache_key(video_id: str, target_lang: str, voice_ref: str | None) -> str:
-    raw = f"{video_id}|{target_lang}|{voice_ref or 'default'}"
+    raw = f"{_CACHE_VERSION}|{video_id}|{target_lang}|{voice_ref or 'default'}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 

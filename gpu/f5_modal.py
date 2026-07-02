@@ -58,7 +58,12 @@ weights = modal.Volume.from_name("sightahead-f5-weights", create_if_missing=True
     image=image,
     gpu="T4",  # ~$0.60/hr; F5 needs ~2-3GB VRAM. Bump to "L4"/"A10G" for speed.
     volumes={"/weights": weights},
-    scaledown_window=60,  # stay warm 60s after the last call, then scale to zero
+    # Stay warm 5 min after the last call, then scale to zero. The cold start
+    # reloads the ~5GB checkpoint (~30-60s) — the dominant "why is it slow to
+    # start after I switch voice" cost. A 5-min window keeps the container warm
+    # across voice switches / rebuilds during active use, while still costing
+    # nothing once the user stops (worst case ~$0.05 of idle GPU per session).
+    scaledown_window=300,
     timeout=600,
     # Cap concurrent GPU containers: chunked spawns queue here instead of
     # exhausting the account's GPU quota (ResourceExhaustedError). Still
@@ -154,28 +159,57 @@ class F5:
         # LONG for its slot (useDubAudio.ts, capped at 1.35x); that one-sided
         # safety net is enough — don't fight it by forcing elongation here.
 
+        import re
+
+        import numpy as np
+
+        # Safety net: bracketed caption tags ("[Music]", "(laughs)") are
+        # sound/emotion markers, not speech — the voice must never read them.
+        # The translator strips these upstream, but cached translations (and
+        # any other caller) may still carry them, so strip here too.
+        bracket_tag = re.compile(r"[\[(][^\])]{0,40}[\])]")
+        # Sentence boundary: period/!/?/… followed by whitespace.
+        sentence_split = re.compile(r"(?<=[.!?…])\s+")
+        # Breath pause inserted between sentences. A segment's text is a merged
+        # sentence GROUP; reading it in one infer() call produced run-on speech
+        # that "breathed" at random mid-sentence spots (Common Voice training
+        # clips are single sentences, so the model never learned sentence-end
+        # pauses). Synthesizing per sentence guarantees each one is read as a
+        # complete calm unit, with the breath exactly at the full stop.
+        _BREATH_SEC = 0.45
+
         results: list[dict] = []
         for seg in segments:
             text = (seg.get("text") or "").strip()
+            text = " ".join(bracket_tag.sub(" ", text).split())
             if not text:
                 results.append({"index": seg["index"], "audio_b64": "", "audio_ms": 0})
                 continue
 
-            wav, sr, _ = self.model.infer(
-                ref_file=ref_path,
-                ref_text=ref_text_used,
-                gen_text=text,
-                nfe_step=48,        # more denoising steps → smoother, less robotic (default 32)
-                cfg_strength=1.5,   # lower → less over-emphasized/robotic monotone (default 2.0)
-                speed=1.08,         # mild pace boost, mirrors Azure's static +30% rate boost
-            )
+            sentences = [s.strip() for s in sentence_split.split(text) if s.strip()]
+            pieces: list[np.ndarray] = []
+            sr = 24000
+            for i, sentence in enumerate(sentences):
+                wav, sr, _ = self.model.infer(
+                    ref_file=ref_path,
+                    ref_text=ref_text_used,
+                    gen_text=sentence,
+                    nfe_step=48,        # more denoising steps → smoother, less robotic (default 32)
+                    cfg_strength=1.5,   # lower → less over-emphasized/robotic monotone (default 2.0)
+                    speed=1.08,         # mild pace boost, mirrors Azure's static +30% rate boost
+                )
+                if i > 0:
+                    pieces.append(np.zeros(int(sr * _BREATH_SEC), dtype=np.asarray(wav).dtype))
+                pieces.append(np.asarray(wav))
+            full = pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
+
             buf = io.BytesIO()
-            sf.write(buf, wav, sr, format="WAV")
+            sf.write(buf, full, sr, format="WAV")
             results.append(
                 {
                     "index": seg["index"],
                     "audio_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
-                    "audio_ms": int(len(wav) / sr * 1000),
+                    "audio_ms": int(len(full) / sr * 1000),
                 }
             )
         return results

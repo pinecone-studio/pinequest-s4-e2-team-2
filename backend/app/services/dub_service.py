@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 # Segments per GPU call. Smaller = first audio arrives sooner (more chunks);
 # Modal may run chunks on parallel containers.
 _CHUNK_SIZE = 8
-# The FIRST chunk is tiny so the very first audio is playable ASAP; the rest use
-# the larger _CHUNK_SIZE for efficiency.
-_FIRST_CHUNK_SIZE = 3
+# The FIRST chunk is a single segment so the very first audio is playable ASAP
+# (the user hears the dub start seconds after switching voice instead of waiting
+# for a whole chunk); the rest use the larger _CHUNK_SIZE for efficiency.
+_FIRST_CHUNK_SIZE = 1
 
 
 def _chunk_ranges(n: int) -> list[tuple[int, int]]:

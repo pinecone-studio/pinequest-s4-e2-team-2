@@ -434,7 +434,7 @@ export function useDubAudio(
 
     // Seek detection: the player time polls every ~250ms, so a jump larger than
     // ~1.5s (scaled by playback rate) means the user seeked. Kill stale audio
-    // and allow the current segment to restart from the right offset.
+    // and fast-forward the reading queue to the seek point.
     const prev = prevTimeRef.current;
     prevTimeRef.current = currentTime;
     const seeked =
@@ -442,53 +442,64 @@ export function useDubAudio(
       Math.abs(currentTime - prev) > Math.max(1.5, playbackRate * 1.5);
     if (seeked) {
       stopAllAudio();
-      lastStartedKeyRef.current = -1;
+      // Mark every line whose window fully precedes the new position as read,
+      // so the queue resumes exactly at the seek point (a line the user lands
+      // inside still plays, from its beginning).
+      let floor = -1;
+      for (const s of segments) {
+        if (s.start + s.duration <= currentTime) floor = Math.max(floor, s.start);
+      }
+      lastStartedKeyRef.current = floor;
     }
 
+    // ONE voice at a time: while a line is being spoken, never start another —
+    // overlapping tails drowned out the first words of the next line. The
+    // ~250ms time poll re-runs this effect, so the next line starts within a
+    // tick of the previous one finishing.
+    let stillSpeaking = false;
+    activeAudiosRef.current.forEach((a) => {
+      if (!a.paused && !a.ended) stillSpeaking = true;
+    });
+    if (stillSpeaking) return;
+
+    // ORDERED reading queue — the fix for "the sentence right after the full
+    // stop never got read": lines are read strictly in order, each one fully.
+    // A line whose video window already passed (the voice runs a little behind
+    // the video when speech is dense) is STILL read as long as we're within
+    // MAX_QUEUE_LAG of its window end; only beyond that is it dropped, letting
+    // the voice catch back up. Video time now only gates when a line may
+    // START; it never cuts into or skips a line that is due.
+    const MAX_QUEUE_LAG = 5;
+    const lastKey = lastStartedKeyRef.current;
     const seg = segments.find(
-      (s) => currentTime >= s.start && currentTime < s.start + s.duration,
+      (s) =>
+        s.start > lastKey &&
+        s.start <= currentTime &&
+        currentTime < s.start + s.duration + MAX_QUEUE_LAG,
     );
-    if (!seg || !seg.blobUrl) return;
+    if (!seg) return;
+    // The next line in the queue exists but its audio isn't synthesized yet →
+    // wait for it (the lag allowance above unblocks the queue if it never comes).
+    if (!seg.blobUrl) return;
 
     const key = seg.start;
     const audioSeconds = seg.audioMs > 0 ? seg.audioMs / 1000 : 0;
     const targetSeconds = Math.max(0.1, seg.duration);
+    // How hard audio that runs long may be sped up to fit its slot. F5 speaks
+    // at a natural human pace — squeezing it 1.35x made it sound rushed, so it
+    // only gets a barely-audible 1.1x catch-up; the queue above absorbs the
+    // rest of the overrun. Azure keeps the original 1.35x stretcher its
+    // timing was tuned around.
+    const maxFit =
+      VOICES.find((v) => v.id === voiceId)?.provider === "f5" ? 1.1 : 1.35;
     const fitRate =
       audioSeconds > targetSeconds
-        ? Math.min(1.35, Math.max(1, audioSeconds / targetSeconds))
+        ? Math.min(maxFit, Math.max(1, audioSeconds / targetSeconds))
         : 1;
-    const offset = Math.max(0, currentTime - seg.start);
 
-    // Same segment already playing — don't restart it. But DO check drift: if
-    // the audio clock has slipped from the expected position (>0.35s) — usually
-    // from browser scheduling, decode delays, or the video hitting a stall —
-    // snap it back so the Mongolian voice stays lined up with the subtitle.
-    if (key === lastStartedKeyRef.current) {
-      const existing = activeAudiosRef.current.get(key);
-      if (existing && !existing.paused && audioSeconds > 0) {
-        const expected = offset * fitRate;
-        if (Math.abs(existing.currentTime - expected) > 0.35) {
-          existing.currentTime = Math.min(
-            expected,
-            Math.max(0, audioSeconds - 0.05),
-          );
-        }
-      }
-      return;
-    }
-
+    // Every line is read from its very beginning — a complete, calm line beats
+    // word-exact sync for dubbing, and the subtitle follows the voice anyway.
     const audio = new Audio(seg.blobUrl);
-
-    // Precisely position the audio to match the video's current spot in the
-    // segment — even for small offsets, so the TTS voice starts speaking at
-    // exactly the right word. Audio media time runs fitRate× faster than video
-    // time. Clamp to the audio's actual length so we never seek past the end.
-    if (audioSeconds > 0) {
-      audio.currentTime = Math.min(
-        offset * fitRate,
-        Math.max(0, audioSeconds - 0.05),
-      );
-    }
 
     audio.volume = Math.max(0, Math.min(1, volume / 100));
     audio.playbackRate = playbackRate * fitRate;
@@ -529,7 +540,7 @@ export function useDubAudio(
 
       const realFitRate =
         dur > targetSeconds
-          ? Math.min(1.35, Math.max(1, dur / targetSeconds))
+          ? Math.min(maxFit, Math.max(1, dur / targetSeconds))
           : 1;
       audio.playbackRate = playbackRate * realFitRate;
       fitRatesRef.current.set(audio, realFitRate);
@@ -584,6 +595,7 @@ export function useDubAudio(
     enabled,
     playing,
     playbackRate,
+    voiceId,
     volume,
     pruneOverlappingAudio,
     stopAllAudio,

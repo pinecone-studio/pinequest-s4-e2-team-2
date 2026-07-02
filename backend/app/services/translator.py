@@ -9,7 +9,10 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 PROVIDER = os.getenv("TRANSLATION_PROVIDER", "openai")
-TRANSLATION_CACHE_VERSION = os.getenv("TRANSLATION_CACHE_VERSION", "sentence-v2")
+# Bumped: [Music]-style tags now filtered, numbers/Latin now spelled out in
+# Mongolian for dub mode, max_chars relaxed from a hard target to a soft guide
+# — old cached translations predate all of that and must not be served.
+TRANSLATION_CACHE_VERSION = os.getenv("TRANSLATION_CACHE_VERSION", "sentence-v3")
 
 _DEFAULT_BATCH_SIZE = int(os.getenv("TRANSLATION_BATCH_SIZE", "18"))
 _PARALLEL_CHUNKS = int(os.getenv("TRANSLATION_PARALLEL_CHUNKS", "4"))
@@ -17,9 +20,25 @@ _CONTEXT_MAX_CHARS = int(os.getenv("TRANSLATION_CONTEXT_MAX_CHARS", "6500"))
 _GROUP_MAX_GAP = float(os.getenv("TRANSLATION_GROUP_MAX_GAP", "1.15"))
 _GROUP_MAX_DURATION = float(os.getenv("TRANSLATION_GROUP_MAX_DURATION", "16"))
 _GROUP_MAX_CHARS = int(os.getenv("TRANSLATION_GROUP_MAX_CHARS", "420"))
-_CHARS_PER_SEC = float(os.getenv("TRANSLATION_CHARS_PER_SEC", "13"))
+# max_chars is now a SOFT pacing guide, not a hard target (see _translation_prompt):
+# gpu/f5_modal.py no longer forces TTS output to fit the source segment's
+# duration (that caused unnaturally slow/stretched speech — see git history),
+# so translations no longer need to be squeezed to a tight char budget. A
+# higher rate gives the model room to translate fully instead of over-summarizing.
+_CHARS_PER_SEC = float(os.getenv("TRANSLATION_CHARS_PER_SEC", "20"))
 _SENTENCE_END_RE = re.compile(r"""[.!?]["')\]\s]*$""")
 _LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z'-]{2,}\b")
+# Bracketed caption tags — "[Music]", "(applause)", "[Laughter]", "(laughs)" —
+# whether they are the whole segment or embedded inside a sentence. They mark
+# sound/emotion, not speech: never translated, never sent to the TTS voice.
+# The 40-char cap keeps a genuinely long parenthetical aside (real content)
+# from being swallowed.
+_BRACKET_TAG_RE = re.compile(r"[\[(][^\])]{0,40}[\])]")
+
+
+def _strip_non_speech(text: str) -> str:
+    """Drop bracketed non-speech tags and re-tidy whitespace."""
+    return re.sub(r"\s+", " ", _BRACKET_TAG_RE.sub(" ", text)).strip()
 
 _DEFAULT_GLOSSARY: dict[str, str] = {
     "transcript": "бичвэр",
@@ -36,8 +55,10 @@ _DEFAULT_GLOSSARY: dict[str, str] = {
     "token": "токен",
     "tokens": "токен",
     "database": "өгөгдлийн сан",
-    "backend": "backend",
-    "frontend": "frontend",
+    # Cyrillic, not Latin: dub mode text is read aloud by an F5 TTS voice
+    # trained only on Mongolian — it cannot pronounce Latin script at all.
+    "backend": "бэкенд",
+    "frontend": "фронтенд",
 }
 
 _COMMON_ENGLISH_LEFTOVERS = {
@@ -220,19 +241,22 @@ def _coerce_timed_texts(items: list[TimedText | dict[str, Any] | tuple[str, floa
     cursor = 0.0
     for item in items:
         if isinstance(item, TimedText):
-            text = item.text.strip()
+            text = _strip_non_speech(item.text)
             if text:
-                out.append(item)
+                out.append(TimedText(start=item.start, duration=item.duration, text=text))
             continue
         if isinstance(item, dict):
-            text = str(item.get("text") or "").strip()
+            text = _strip_non_speech(str(item.get("text") or ""))
             start = float(item.get("start") or cursor)
             duration = float(item.get("duration") or 0)
         else:
-            text = str(item[0] or "").strip()
+            text = _strip_non_speech(str(item[0] or ""))
             duration = float(item[1] or 0)
             start = cursor
+        # Segments that were ONLY a tag ("[Music]") come out empty — skip them,
+        # but still advance the cursor so later start-less items stay in sync.
         if not text:
+            cursor = max(cursor, start + duration)
             continue
         out.append(TimedText(start=start, duration=duration, text=text))
         cursor = max(cursor, start + duration)
@@ -342,11 +366,21 @@ def _translations_by_id(data: Any, target_ids: set[int]) -> dict[int, str]:
     return out
 
 
-def _suspicious_latin_words(text: str) -> list[str]:
+def _suspicious_latin_words(text: str, speech_mode: bool = False) -> list[str]:
+    """Latin leftovers the repair pass should Cyrillize.
+
+    speech_mode (dub/fit_durations): the F5 voice reading this text was
+    fine-tuned on Mongolian only and cannot pronounce Latin script AT ALL —
+    so every Latin word is suspicious, including acronyms/proper nouns that
+    the (subtitle-only) allowlist below would otherwise permit.
+    """
     suspicious: list[str] = []
     for match in _LATIN_WORD_RE.finditer(text):
         word = match.group(0)
         lowered = word.lower().strip("'")
+        if speech_mode:
+            suspicious.append(word)
+            continue
         if lowered in _ALLOWED_LATIN_WORDS:
             continue
         if word.isupper() and len(word) <= 8:
@@ -379,8 +413,9 @@ def _translation_prompt(
         task = (
             "Translate each sentence/group into natural spoken Mongolian for dubbing. "
             "The input groups are already merged from broken caption fragments. "
-            "Keep each translated line concise enough to speak within duration and "
-            "near max_chars when possible, but do not drop important meaning."
+            "max_chars is a soft pacing guide, not a hard limit: translate the FULL "
+            "meaning first, elaborating slightly if that reads more naturally in "
+            "Mongolian — never cut content short just to stay under max_chars."
         )
     else:
         task = (
@@ -397,6 +432,32 @@ def _translation_prompt(
         "groups": [_group_payload(group, fit_durations) for group in groups],
     }
 
+    # Dub mode text is READ ALOUD by an F5 voice fine-tuned only on Mongolian —
+    # it cannot pronounce digits or Latin script at all, so both must become
+    # spoken-Mongolian-Cyrillic. Subtitle-only mode is just displayed, so digits
+    # and established Latin acronyms/proper nouns stay legible as written.
+    if fit_durations:
+        latin_rule = (
+            "- This text is READ ALOUD by a speech synthesizer that can only "
+            "pronounce Mongolian Cyrillic — it cannot read Latin script at all. "
+            "Do NOT leave ANY word in Latin script, including proper nouns, brand/"
+            "product names, and acronyms. Transliterate everything phonetically "
+            "into Mongolian Cyrillic the way a Mongolian speaker would say it "
+            "aloud (e.g. React → Реакт, GitHub → Гитхаб, API → эй-пи-ай, "
+            "OpenAI → Опен-эй-ай).\n"
+        )
+        number_rule = (
+            "- The synthesizer cannot pronounce digits either. Spell out every "
+            "number as Mongolian words (e.g. 2024 → хоёр мянга хорин дөрөв, "
+            "15 → арван тав, 3000 → гурван мянга).\n"
+        )
+    else:
+        latin_rule = (
+            "- Keep Latin text ONLY for proper nouns, brand/product names, acronyms, URLs, "
+            "code identifiers, API names, file paths, env vars, and command flags.\n"
+        )
+        number_rule = ""
+
     return (
         f"{task}\n\n"
         "Return ONLY valid JSON in this exact shape:\n"
@@ -406,12 +467,13 @@ def _translation_prompt(
         "- Keep ids as numbers and preserve chronological order.\n"
         "- Use Mongolian Cyrillic.\n"
         "- Translate all normal English words into natural Mongolian.\n"
-        "- Keep Latin text ONLY for proper nouns, brand/product names, acronyms, URLs, "
-        "code identifiers, API names, file paths, env vars, and command flags.\n"
+        f"{latin_rule}"
+        f"{number_rule}"
         "- Do not leave common English words untranslated.\n"
         "- Apply the glossary where it fits naturally; do not over-literalize.\n"
         "- Rewrite for Mongolian word order; do not translate word by word.\n"
-        "- Do not summarize, omit, explain, or add commentary.\n\n"
+        "- Do not summarize, omit, or drop meaning; do not add commentary or explanations "
+        "not present in the source.\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
 
@@ -434,17 +496,31 @@ def _repair_prompt(
                 **_group_payload(group, fit_durations),
                 "current_translation": translations.get(group.id, ""),
                 "suspicious_latin_words": _suspicious_latin_words(
-                    translations.get(group.id, "")
+                    translations.get(group.id, ""), speech_mode=fit_durations
                 ),
             }
             for group in groups
         ],
     }
+    if fit_durations:
+        instruction = (
+            "Repair these Mongolian dub translations. \"suspicious_latin_words\" were "
+            "left in Latin, but this text is READ ALOUD by a speech synthesizer that "
+            "can only pronounce Mongolian Cyrillic — it cannot read Latin at all, not "
+            "even acronyms or proper nouns. Transliterate every suspicious word "
+            "phonetically into Mongolian Cyrillic the way a Mongolian speaker would "
+            "say it aloud (e.g. React → Реакт, API → эй-пи-ай). Also spell out any "
+            "remaining digits as Mongolian words."
+        )
+    else:
+        instruction = (
+            "Repair these Mongolian translations. Some ordinary English words were "
+            "left in Latin. Translate ordinary English into natural Mongolian Cyrillic. "
+            "Keep Latin only for proper nouns, brands, acronyms, URLs, code identifiers, "
+            "API names, file paths, env vars, and command flags."
+        )
     return (
-        "Repair these Mongolian translations. Some ordinary English words were "
-        "left in Latin. Translate ordinary English into natural Mongolian Cyrillic. "
-        "Keep Latin only for proper nouns, brands, acronyms, URLs, code identifiers, "
-        "API names, file paths, env vars, and command flags.\n\n"
+        f"{instruction}\n\n"
         "Return ONLY valid JSON in this exact shape:\n"
         '{"translations":[{"id":0,"text":"..."}]}\n\n'
         f"{json.dumps(payload, ensure_ascii=False)}"
@@ -483,7 +559,9 @@ def _openai_translate_group_chunk(
     translations = _translations_by_id(data, target_ids)
 
     suspicious_groups = [
-        group for group in groups if _suspicious_latin_words(translations.get(group.id, ""))
+        group
+        for group in groups
+        if _suspicious_latin_words(translations.get(group.id, ""), speech_mode=fit_durations)
     ]
     if suspicious_groups:
         logger.info(

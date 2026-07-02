@@ -1,7 +1,7 @@
 "use client"
 
 import React, { type ReactNode, type RefObject } from "react"
-import { Settings, CheckCircle2, Maximize2, Minimize2 } from "lucide-react"
+import { Settings, CheckCircle2, Maximize2, Minimize2, ChevronRight, ChevronLeft, Check } from "lucide-react"
 import { SOURCE_LINE, type Note } from "./data"
 import { VideoFrame } from "./VideoFrame"
 import type { DubStep } from "./useDubAudio"
@@ -200,6 +200,12 @@ function SpeedRow({
 
 export function VideoPane(props: VideoPaneProps) {
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  // YouTube-style drill-down: the voice row opens a submenu INSIDE the same
+  // settings-panel instead of expanding inline. Only the voice section works
+  // this way — volume/speed stay inline, unchanged. Reset alongside the gear
+  // toggle (not a separate effect) so closing settings always lands back on
+  // the top-level list next time it opens.
+  const [voiceMenuOpen, setVoiceMenuOpen] = React.useState(false)
   const [isFullscreen, setIsFullscreen] = React.useState(false)
   const videoWrapperRef = React.useRef<HTMLDivElement | null>(null)
 
@@ -322,7 +328,7 @@ export function VideoPane(props: VideoPaneProps) {
             {hasAnySettings && (
               <div className="settings-container">
                 <button
-                  onClick={() => setSettingsOpen((o) => !o)}
+                  onClick={() => setSettingsOpen((o) => { if (o) setVoiceMenuOpen(false); return !o })}
                   className={`settings-gear-btn${settingsOpen ? " is-open" : ""}`}
                   title="Тохиргоо"
                   aria-expanded={settingsOpen}
@@ -334,26 +340,58 @@ export function VideoPane(props: VideoPaneProps) {
 
                 {settingsOpen && (
                   <div className="settings-panel">
-                    {hasDubSettings && (
+                    {/* YouTube-style: selecting "ХООЛОЙ" drills into a submenu
+                        that replaces the panel content; a back row returns to
+                        the top-level list. Volume/speed stay inline below. */}
+                    {voiceMenuOpen && props.voices && props.onSelectVoice ? (
+                      <div className="settings-section">
+                        <button
+                          type="button"
+                          className="settings-back-row"
+                          onClick={() => setVoiceMenuOpen(false)}
+                        >
+                          <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
+                          <span className="settings-section-label">ХООЛОЙ</span>
+                        </button>
+                        <div className="dub-voice-picker" role="group" aria-label="Хоолой сонгох">
+                          {props.voices.map((v) => (
+                            <button
+                              key={v.id}
+                              onClick={
+                                props.selectedVoiceId !== v.id
+                                  ? () => { props.onSelectVoice!(v.id); setVoiceMenuOpen(false) }
+                                  : () => setVoiceMenuOpen(false)
+                              }
+                              disabled={isLoading}
+                              className={`dub-voice-card${props.selectedVoiceId === v.id ? " is-selected" : ""}`}
+                              aria-pressed={props.selectedVoiceId === v.id}
+                            >
+                              <span className="dub-voice-check" aria-hidden>
+                                {props.selectedVoiceId === v.id && <Check size={14} strokeWidth={3} />}
+                              </span>
+                              <span className="dub-voice-gender" aria-hidden>{v.gender === "male" ? "♂" : "♀"}</span>
+                              <span className="dub-voice-name">{v.name}</span>
+                              <span className="dub-voice-provider">{v.provider === "f5" ? "F5" : "Azure"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : hasDubSettings && (
                       <>
                         {props.voices && props.onSelectVoice && (
                           <div className="settings-section">
-                            <span className="settings-section-label">ХООЛОЙ</span>
-                            <div className="dub-voice-picker" role="group" aria-label="Хоолой сонгох">
-                              {props.voices.map((v) => (
-                                <button
-                                  key={v.id}
-                                  onClick={props.selectedVoiceId !== v.id ? () => props.onSelectVoice!(v.id) : undefined}
-                                  disabled={isLoading}
-                                  className={`dub-voice-card${props.selectedVoiceId === v.id ? " is-selected" : ""}`}
-                                  aria-pressed={props.selectedVoiceId === v.id}
-                                >
-                                  <span className="dub-voice-gender" aria-hidden>{v.gender === "male" ? "♂" : "♀"}</span>
-                                  <span className="dub-voice-name">{v.name}</span>
-                                  <span className="dub-voice-provider">{v.provider === "f5" ? "F5" : "Azure"}</span>
-                                </button>
-                              ))}
-                            </div>
+                            <button
+                              type="button"
+                              className="settings-menu-row"
+                              onClick={() => setVoiceMenuOpen(true)}
+                              disabled={isLoading}
+                            >
+                              <span className="settings-section-label">ХООЛОЙ</span>
+                              <span className="settings-menu-row-value">
+                                {props.voices.find((v) => v.id === props.selectedVoiceId)?.name ?? ""}
+                                <ChevronRight size={14} strokeWidth={2.5} aria-hidden />
+                              </span>
+                            </button>
                           </div>
                         )}
 

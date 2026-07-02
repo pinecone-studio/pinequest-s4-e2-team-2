@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from enum import Enum
@@ -256,6 +258,27 @@ def _build_qpay_invoice_payload(order: PaymentOrderRecord) -> dict[str, Any]:
     }
 
 
+def _invoice_id_from_qpay_response(invoice_response: dict[str, Any], fallback: str) -> str:
+    return str(
+        _first_value(
+            invoice_response,
+            "invoice_id",
+            "invoiceId",
+            "qpay_invoice_id",
+            "qpayInvoiceId",
+            "object_id",
+            "objectId",
+            "invoice_no",
+            "invoiceNo",
+            "id",
+            "payment_id",
+            "transaction_id",
+            "order_id",
+        )
+        or fallback
+    )
+
+
 def _unwrap_quickpay_response(data: dict[str, Any]) -> dict[str, Any]:
     nested = data.get("data")
     if isinstance(nested, dict):
@@ -284,31 +307,243 @@ def _first_value(data: dict[str, Any], *keys: str) -> Any:
 
 def _urls_from_qpay(data: dict[str, Any]) -> list[QPayBankUrl]:
     nested = _unwrap_quickpay_response(data)
-    urls = nested.get("urls") or nested.get("deeplinks") or nested.get("bank_urls") or data.get("urls") or []
+    urls = (
+        nested.get("urls")
+        or nested.get("deeplinks")
+        or nested.get("bank_urls")
+        or nested.get("bankUrls")
+        or data.get("urls")
+        or data.get("deeplinks")
+        or data.get("bank_urls")
+        or data.get("bankUrls")
+        or []
+    )
+    if isinstance(urls, dict):
+        urls = list(urls.values())
     if not isinstance(urls, list):
         return []
     parsed: list[QPayBankUrl] = []
     for item in urls:
         if isinstance(item, dict):
-            parsed.append(QPayBankUrl(**item))
+            link = _first_navigable_bank_url(
+                item,
+                "deeplink",
+                "deep_link",
+                "app_link",
+                "appLink",
+                "universal_link",
+                "universalLink",
+                "web_url",
+                "webUrl",
+                "bank_url",
+                "bankUrl",
+                "bank_link",
+                "bankLink",
+                "payment_url",
+                "paymentUrl",
+                "payment_link",
+                "paymentLink",
+                "checkout_url",
+                "checkoutUrl",
+                "url",
+                "link",
+            )
+            if not link:
+                continue
+            parsed.append(
+                QPayBankUrl(
+                    name=_first_bank_url_value(item, "name", "bank_name", "bankName"),
+                    description=_first_bank_url_value(item, "description", "title", "label"),
+                    link=link,
+                    logo=_first_bank_url_value(item, "logo", "logo_url", "logoUrl", "icon"),
+                )
+            )
+        elif isinstance(item, str) and _is_bank_navigation_link(item):
+            parsed.append(QPayBankUrl(link=item.strip()))
     return parsed
 
 
-def _paid_row(check_response: dict[str, Any]) -> dict[str, Any] | None:
-    nested = _unwrap_quickpay_response(check_response)
-    direct_status = nested.get("payment_status") or nested.get("status") or nested.get("state")
-    if isinstance(direct_status, str):
-        direct = dict(nested)
-        direct["payment_status"] = direct_status.upper()
-        return direct
+def _is_bank_navigation_link(value: str) -> bool:
+    value = value.strip()
+    if not value:
+        return False
+    # Raw EMV QR payloads start with numeric data such as "000201..."; those are
+    # scannable QR text, not browser/app navigation URLs.
+    if value.startswith("000201"):
+        return False
+    return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value))
 
-    rows = nested.get("rows") or check_response.get("rows") or []
-    if not isinstance(rows, list):
-        return None
-    for row in rows:
-        if isinstance(row, dict) and row.get("payment_status") == "PAID":
-            return row
+
+def _first_navigable_bank_url(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and _is_bank_navigation_link(value):
+            return value.strip()
+    ignored_keys = {
+        "name",
+        "bank_name",
+        "bankName",
+        "description",
+        "title",
+        "label",
+        "logo",
+        "logo_url",
+        "logoUrl",
+        "icon",
+        "image",
+        "qr",
+        "qr_text",
+        "qrText",
+        "qr_image",
+        "qrImage",
+    }
+    for key, value in data.items():
+        if key in ignored_keys:
+            continue
+        if isinstance(value, str) and _is_bank_navigation_link(value):
+            return value.strip()
     return None
+
+
+def _first_bank_url_value(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _paid_row(check_response: dict[str, Any]) -> dict[str, Any] | None:
+    for row in _payment_row_candidates(check_response):
+        status_value = _first_payment_value(row, *_PAYMENT_STATUS_KEYS)
+        if _is_paid_status(status_value):
+            if str(status_value).strip().upper() != "PAID" and not _has_payment_context(row):
+                continue
+            paid = dict(row)
+            paid["payment_status"] = str(status_value).upper()
+            return paid
+    return None
+
+
+_PAYMENT_STATUS_KEYS = (
+    "payment_status",
+    "paymentStatus",
+    "status",
+    "state",
+    "payment_state",
+    "paymentState",
+    "transaction_status",
+    "transactionStatus",
+)
+
+_PAYMENT_AMOUNT_KEYS = (
+    "paid_amount",
+    "paidAmount",
+    "payment_amount",
+    "paymentAmount",
+    "amount",
+    "total_amount",
+    "totalAmount",
+)
+
+_PAYMENT_ID_KEYS = (
+    "payment_id",
+    "paymentId",
+    "transaction_id",
+    "transactionId",
+    "id",
+)
+
+_PAYMENT_DATE_KEYS = (
+    "payment_date",
+    "paymentDate",
+    "paid_at",
+    "paidAt",
+    "transaction_date",
+    "transactionDate",
+    "created_at",
+    "createdAt",
+)
+
+_PAID_STATUSES = {"PAID", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED", "SETTLED"}
+
+
+def _is_paid_status(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().upper() in _PAID_STATUSES
+
+
+def _truthy_paid_value(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "paid", "success", "succeeded", "completed", "approved"}
+    return False
+
+
+def _first_payment_value(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _has_payment_context(data: dict[str, Any]) -> bool:
+    for key in (*_PAYMENT_AMOUNT_KEYS, *_PAYMENT_ID_KEYS, *_PAYMENT_DATE_KEYS):
+        if data.get(key) is not None:
+            return True
+    return False
+
+
+def _payment_row_candidates(value: Any, depth: int = 0) -> list[dict[str, Any]]:
+    if depth > 4:
+        return []
+    if isinstance(value, list):
+        rows: list[dict[str, Any]] = []
+        for item in value:
+            rows.extend(_payment_row_candidates(item, depth + 1))
+        return rows
+    if not isinstance(value, dict):
+        return []
+
+    rows = [value]
+    for key in (
+        "data",
+        "result",
+        "payment",
+        "payments",
+        "transaction",
+        "transactions",
+        "rows",
+        "items",
+        "list",
+        "results",
+    ):
+        nested = value.get(key)
+        if isinstance(nested, (dict, list)):
+            rows.extend(_payment_row_candidates(nested, depth + 1))
+    return rows
+
+
+def _first_money_value(*values: Any) -> Decimal | None:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            return _money(value)
+        except PaymentValidationError:
+            continue
+    return None
+
+
+def _paid_amount_from_response(check_response: dict[str, Any], row: dict[str, Any] | None = None) -> Decimal | None:
+    nested = _unwrap_quickpay_response(check_response)
+    row = row or {}
+    return _first_money_value(
+        _first_payment_value(row, *_PAYMENT_AMOUNT_KEYS),
+        _first_payment_value(nested, *_PAYMENT_AMOUNT_KEYS),
+        _first_payment_value(check_response, *_PAYMENT_AMOUNT_KEYS),
+    )
 
 
 def _parse_payment_date(value: Any) -> datetime | None:
@@ -324,26 +559,26 @@ def _parse_payment_date(value: Any) -> datetime | None:
 
 def _is_paid(check_response: dict[str, Any], expected_amount: float) -> bool:
     nested = _unwrap_quickpay_response(check_response)
-    paid_value = nested.get("paid")
-    if paid_value is True:
-        return True
-
+    paid_value = nested.get("paid") or check_response.get("paid")
     row = _paid_row(check_response) or {}
-    status_value = row.get("payment_status") or row.get("status") or row.get("state")
-    if not isinstance(status_value, str):
-        return False
+    paid_amount = _paid_amount_from_response(check_response, row)
 
-    if status_value.upper() not in {"PAID", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED"}:
-        return False
+    if _truthy_paid_value(paid_value):
+        if paid_amount is None:
+            return True
+        return paid_amount >= _money(expected_amount)
 
-    paid_amount = _money(
-        nested.get("paid_amount")
-        or row.get("payment_amount")
-        or row.get("amount")
-        or nested.get("amount")
-        or 0
-    )
-    return paid_amount >= _money(expected_amount)
+    if row:
+        if paid_amount is None:
+            return True
+        return paid_amount >= _money(expected_amount)
+
+    count_value = nested.get("count") or nested.get("payment_count") or nested.get("paymentCount")
+    try:
+        has_payment_rows = int(count_value or 0) > 0
+    except (TypeError, ValueError):
+        has_payment_rows = False
+    return bool(has_payment_rows and paid_amount is not None and paid_amount >= _money(expected_amount))
 
 
 def _status_from_doc(data: dict[str, Any]) -> PaymentOrderRecord:
@@ -419,18 +654,7 @@ def create_qpay_order(user: UserProfile, payload: PaymentOrderCreate | None = No
         raise
 
     updates = {
-        "qpay_invoice_id": str(
-            _first_value(
-                invoice_response,
-                "invoice_id",
-                "invoiceId",
-                "id",
-                "payment_id",
-                "transaction_id",
-                "order_id",
-            )
-            or order.id
-        ),
+        "qpay_invoice_id": _invoice_id_from_qpay_response(invoice_response, order.id),
         "qpay_invoice_response": invoice_response,
         "qr_text": _first_value(invoice_response, "qr_text", "qrText", "qr", "qr_data"),
         "qr_image": _first_value(invoice_response, "qr_image", "qrImage", "qr_code", "qrCode"),
@@ -491,29 +715,17 @@ def mark_order_paid(order: PaymentOrderRecord, check_response: dict[str, Any]) -
     row = _paid_row(check_response) or {}
     nested = _unwrap_quickpay_response(check_response)
     paid_at = (
-        _parse_payment_date(row.get("payment_date"))
-        or _parse_payment_date(row.get("paid_at"))
-        or _parse_payment_date(nested.get("paid_at"))
+        _parse_payment_date(_first_payment_value(row, *_PAYMENT_DATE_KEYS))
+        or _parse_payment_date(_first_payment_value(nested, *_PAYMENT_DATE_KEYS))
         or utc_now()
     )
-    payment_amount = _money_float(
-        nested.get("paid_amount")
-        or row.get("payment_amount")
-        or row.get("amount")
-        or nested.get("amount")
-        or current.amount
-    )
-    payment_id = (
-        row.get("payment_id")
-        or row.get("id")
-        or nested.get("payment_id")
-        or nested.get("transaction_id")
-        or nested.get("id")
-    )
+    payment_amount = float(_paid_amount_from_response(check_response, row) or _money(current.amount))
+    payment_id = _first_payment_value(row, *_PAYMENT_ID_KEYS) or _first_payment_value(nested, *_PAYMENT_ID_KEYS)
+    payment_status = _first_payment_value(row, *_PAYMENT_STATUS_KEYS) or _first_payment_value(nested, *_PAYMENT_STATUS_KEYS)
     updates = {
         "status": PaymentStatus.PAID.value,
         "qpay_payment_id": str(payment_id) if payment_id is not None else None,
-        "qpay_payment_status": row.get("payment_status") or row.get("status") or nested.get("status"),
+        "qpay_payment_status": str(payment_status) if payment_status is not None else None,
         "qpay_paid_amount": payment_amount,
         "qpay_check_response": check_response,
         "paid_at": paid_at,
@@ -534,7 +746,19 @@ def sync_order_status(order_id: str) -> PaymentOrderRecord:
     if not order.qpay_invoice_id:
         return order
 
-    check_response = QPayClient().check_invoice_payment(order.qpay_invoice_id, order.id)
+    invoice_id = order.qpay_invoice_id
+    if order.qpay_invoice_response:
+        invoice_id = _invoice_id_from_qpay_response(order.qpay_invoice_response, invoice_id)
+        if invoice_id != order.qpay_invoice_id:
+            _order_ref(order.id).set(
+                {
+                    "qpay_invoice_id": invoice_id,
+                    "updated_at": utc_now(),
+                },
+                merge=True,
+            )
+
+    check_response = QPayClient().check_invoice_payment(invoice_id, order.id)
     updates = {
         "qpay_check_response": check_response,
         "updated_at": utc_now(),

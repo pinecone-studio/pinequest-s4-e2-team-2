@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LogIn, LogOut, Moon, NotebookPen, Sun } from "lucide-react";
+import { CheckCircle2, LogIn, LogOut, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/_comps/providers/ThemeProvider";
 import { useAuth } from "@/_comps/providers/AuthProvider";
 import { useUI } from "@/_comps/providers/UIprovider";
@@ -70,13 +70,13 @@ export default function Header({
 
       <div>
         {user && isSubscribed ? (
-          <Link
-            href={`/${user.uid}/note`}
-            className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent"
+          <span
+            className="inline-flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-300"
+            aria-label="Та Pro эрхтэй байна"
           >
-            <NotebookPen className="w-4 h-4" />
-            <span className="hidden sm:inline">Тэмдэглэл</span>
-          </Link>
+            <CheckCircle2 className="w-4 h-4" />
+            <span>Та Pro эрхтэй байна</span>
+          </span>
         ) : (
           <Link
             className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent"

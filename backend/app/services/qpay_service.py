@@ -91,7 +91,15 @@ class QuickPayClient:
         return self._request("POST", "/api/qpay/invoices", payload)
 
     def check_invoice_payment(self, invoice_id: str, order_id: str | None = None) -> dict[str, Any]:
-        return self._request("POST", "/api/qpay/payments/check", {"invoice_id": invoice_id})
+        payload = {
+            "invoice_id": invoice_id,
+            "object_id": invoice_id,
+            "object_type": "INVOICE",
+        }
+        if order_id:
+            payload["order_id"] = order_id
+            payload["sender_invoice_no"] = order_id
+        return self._request("POST", "/api/qpay/payments/check", payload)
 
     def get_invoice(self, invoice_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/qpay/invoices/{invoice_id}")

@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   CreditCard,
-  ExternalLink,
   Loader2,
   QrCode,
   RefreshCw,
@@ -108,7 +107,7 @@ export default function CheckoutPage() {
                   Про эрх авах
                 </h1>
                 <p className="max-w-2xl text-base leading-7 text-muted-foreground">
-                  QuickPay invoice үүсгээд банкны апп эсвэл QR-р төлнө. Төлбөр
+                  QuickPay invoice үүсгээд QR-р төлнө. Төлбөр
                   баталгаажмагц notes, AI assistant болон хязгааргүй видео үзэх
                   эрх идэвхжинэ.
                 </p>
@@ -192,25 +191,6 @@ export default function CheckoutPage() {
                     </div>
                   )}
 
-                  {order.urls.length ? (
-                    <div className="space-y-2">
-                      {order.urls.map((item) =>
-                        item.link ? (
-                          <a
-                            key={`${item.name}-${item.link}`}
-                            href={item.link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
-                          >
-                            <span>{item.name || item.description || "Банкны апп"}</span>
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
-                        ) : null,
-                      )}
-                    </div>
-                  ) : null}
-
                   <Button
                     variant="outline"
                     className="w-full"
@@ -228,7 +208,7 @@ export default function CheckoutPage() {
               ) : (
                 <div className="space-y-3 text-sm text-muted-foreground">
                   <CreditCard className="h-8 w-8 text-foreground" />
-                  <p>QuickPay invoice үүсгэсний дараа QR болон банкны аппын холбоос энд харагдана.</p>
+                  <p>QuickPay invoice үүсгэсний дараа QR код энд харагдана.</p>
                 </div>
               )}
             </aside>

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
@@ -11,6 +12,7 @@ PROVIDER = os.getenv("TRANSLATION_PROVIDER", "openai")
 TRANSLATION_CACHE_VERSION = os.getenv("TRANSLATION_CACHE_VERSION", "sentence-v2")
 
 _DEFAULT_BATCH_SIZE = int(os.getenv("TRANSLATION_BATCH_SIZE", "18"))
+_PARALLEL_CHUNKS = int(os.getenv("TRANSLATION_PARALLEL_CHUNKS", "4"))
 _CONTEXT_MAX_CHARS = int(os.getenv("TRANSLATION_CONTEXT_MAX_CHARS", "6500"))
 _GROUP_MAX_GAP = float(os.getenv("TRANSLATION_GROUP_MAX_GAP", "1.15"))
 _GROUP_MAX_DURATION = float(os.getenv("TRANSLATION_GROUP_MAX_DURATION", "16"))
@@ -550,21 +552,32 @@ def translate_timed_segments(
 
     size = batch_size or _DEFAULT_BATCH_SIZE
     translated_by_id: dict[int, str] = {}
-    for chunk in _build_group_chunks(groups, size):
+    chunks = _build_group_chunks(groups, size)
+
+    def _translate_chunk(chunk: list[_TextGroup]) -> dict[int, str]:
         try:
-            translated_by_id.update(
-                _openai_translate_group_chunk(
-                    chunk,
-                    source_lang,
-                    "mn",
-                    fit_durations=fit_durations,
-                )
+            return _openai_translate_group_chunk(
+                chunk,
+                source_lang,
+                "mn",
+                fit_durations=fit_durations,
             )
         except Exception:
             logger.exception(
                 "group translation chunk failed; using original text for group ids %s",
                 [group.id for group in chunk],
             )
+            return {}
+
+    if len(chunks) <= 1:
+        for chunk in chunks:
+            translated_by_id.update(_translate_chunk(chunk))
+    else:
+        # Chunks are independent — translating them in parallel cuts the
+        # wall-clock wait before the first dub audio from N×chunk to ~1×chunk.
+        with ThreadPoolExecutor(max_workers=min(_PARALLEL_CHUNKS, len(chunks))) as pool:
+            for result in pool.map(_translate_chunk, chunks):
+                translated_by_id.update(result)
 
     return [
         TranslatedSegment(

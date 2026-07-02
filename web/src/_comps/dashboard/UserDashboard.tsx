@@ -26,16 +26,24 @@ export default function UserDashboard() {
     voices,
     selectedVoiceId,
     selectVoice,
+    dubVolume,
+    setDubVolume,
+    dubSpeed,
+    setDubSpeed,
+    ytVolume,
+    setYtVolume,
     dub,
     cancel,
   } = useVideoProcess();
 
-  // Duck the original YouTube audio while the Mongolian dub is playing.
+  // Duck the original YouTube audio while the Mongolian dub is playing. The
+  // user-controlled `ytVolume` slider only applies during Mongolian mode; in
+  // original mode we always restore full volume.
   useEffect(() => {
     if (!player.ready) return;
     player.unMute();
-    player.setVolume(dubMode === "mongolian" ? 12 : 100);
-  }, [dubMode, player.ready, videoId, player.unMute, player.setVolume]);
+    player.setVolume(dubMode === "mongolian" ? ytVolume : 100);
+  }, [dubMode, ytVolume, player.ready, videoId, player.unMute, player.setVolume]);
 
   const subLoading =
     processStage === "fetching" || processStage === "translating";
@@ -70,6 +78,7 @@ export default function UserDashboard() {
                   currentTime={player.time}
                   loading={subLoading}
                   error={subError}
+                  dubSpeed={dubMode === "mongolian" ? dubSpeed : 1}
                 />
               ) : null
             }
@@ -81,6 +90,12 @@ export default function UserDashboard() {
             voices={voices}
             selectedVoiceId={selectedVoiceId}
             onSelectVoice={selectVoice}
+            dubVolume={dubVolume}
+            ytVolume={ytVolume}
+            onDubVolumeChange={setDubVolume}
+            onYtVolumeChange={setYtVolume}
+            dubSpeed={dubSpeed}
+            onDubSpeedChange={setDubSpeed}
             processStage={processStage}
             processProgress={processProgress}
           />

@@ -26,7 +26,7 @@ from app.services.translator import (
     TranslatedSegment,
     translate_timed_segments,
 )
-from app.services.tts_service import synthesize
+from app.services.tts_service import EmptyTextError, synthesize
 from app.services.summary_service import summarize
 from app.services.cache_service import get_cached_video, cache_video, save_summary, get_latest_summary
 from app.services.auth_service import get_current_user
@@ -145,7 +145,12 @@ def _incoming_translated_segments(segments: list[SegmentInput]) -> list[Translat
     return translated_segments
 
 
-def _voice_cache_key(gender: str | None) -> str:
+def _voice_cache_key(voice: str | None, gender: str | None) -> str:
+    # Voice ID (e.g. "mn-MN-BataaNeural") is what actually selects the TTS voice,
+    # so it must key the audio cache; gender is only a legacy fallback.
+    voice_id = (voice or "").strip()
+    if voice_id:
+        return voice_id
     value = (gender or "").strip().lower()
     return "male" if value == "male" else "female"
 
@@ -187,6 +192,7 @@ def _cached_translation_segments(
 def _cached_dub_audio_segments(
     video_id: str | None,
     source_segments: list[SegmentInput],
+    voice: str | None,
     gender: str | None,
 ) -> list[dict] | None:
     if not video_id:
@@ -205,7 +211,7 @@ def _cached_dub_audio_segments(
     tts_cache = entry.get("tts")
     if not isinstance(tts_cache, dict):
         return None
-    voice_entry = tts_cache.get(_voice_cache_key(gender))
+    voice_entry = tts_cache.get(_voice_cache_key(voice, gender))
     if not isinstance(voice_entry, dict):
         return None
     if voice_entry.get("version") != TRANSLATION_CACHE_VERSION:
@@ -284,6 +290,7 @@ def _cache_dub_audio_segments(
     source_segments: list[SegmentInput],
     translated_segments: list[TranslatedSegment],
     audio_segments: list[dict],
+    voice: str | None,
     gender: str | None,
 ) -> None:
     if not video_id:
@@ -300,7 +307,7 @@ def _cache_dub_audio_segments(
     )
     tts_cache = existing_entry.get("tts") if same_source and isinstance(existing_entry.get("tts"), dict) else {}
     tts_cache = dict(tts_cache)
-    tts_cache[_voice_cache_key(gender)] = {
+    tts_cache[_voice_cache_key(voice, gender)] = {
         "version": TRANSLATION_CACHE_VERSION,
         "audio_format": "mp3-base64",
         "segments": audio_segments,
@@ -460,13 +467,14 @@ async def process_video(
         cached_audio_segments = _cached_dub_audio_segments(
             request.video_id,
             segments_in,
+            request.voice,
             request.gender,
         )
         if cached_audio_segments:
             logger.info(
-                "/process TTS audio cache hit: %d segments gender=%s (video_id=%s)",
+                "/process TTS audio cache hit: %d segments voice=%s (video_id=%s)",
                 len(cached_audio_segments),
-                _voice_cache_key(request.gender),
+                _voice_cache_key(request.voice, request.gender),
                 request.video_id,
             )
             for i, cached_segment in enumerate(cached_audio_segments):
@@ -493,27 +501,34 @@ async def process_video(
 
         _bracket_only = re.compile(r"^\s*(\[.*?\]\s*)+$")
 
-        def _tts_one(i: int) -> tuple[int, str, str, int]:
-            mn_text = translated_segments[i].translated_text
-            if _bracket_only.match(mn_text):
-                return i, mn_text, "", 0
+        def _tts_one(i: int) -> tuple[int, str, str, int, bool]:
+            mn_text = translated_segments[i].translated_text or ""
+            # Bracket-only segments ([Music], [Applause]) and blank text are
+            # intentionally silent — not a TTS failure, so they must not block
+            # caching or count as errors.
+            if not mn_text.strip() or _bracket_only.match(mn_text):
+                return i, mn_text, "", 0, False
             try:
                 audio_bytes = synthesize(mn_text, {"voice": request.voice, "gender": request.gender})
                 audio_ms = audio_duration_ms_from_bytes(audio_bytes)
                 audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            except EmptyTextError:
+                # Defensive: synthesize() reports this on blank input we didn't
+                # catch above. Treat as silent, not a failure.
+                return i, mn_text, "", 0, False
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "/process ✗ TTS failed for segment %d/%d (%s: %s) text=%r",
                     i, total, type(exc).__name__, exc, mn_text[:120],
                 )
-                audio_b64, audio_ms = "", 0
-            return i, mn_text, audio_b64, audio_ms
+                return i, mn_text, "", 0, True
+            return i, mn_text, audio_b64, audio_ms, False
 
         with ThreadPoolExecutor(max_workers=12) as pool:
             futures = {pool.submit(_tts_one, i): i for i in range(total)}
             for future in as_completed(futures):
-                i, mn_text, audio_b64, audio_ms = future.result()
-                if not audio_b64:
+                i, mn_text, audio_b64, audio_ms, failed = future.result()
+                if failed:
                     tts_failures += 1
                 seg = translated_segments[i]
                 logger.debug(
@@ -556,13 +571,14 @@ async def process_video(
                     translated_segments,
                     mode,
                 )
-                if tts_failures == 0 and all(audio_results):
+                if tts_failures == 0 and all(result is not None for result in audio_results):
                     _cache_dub_audio_segments(
                         request.video_id,
                         request.source_lang,
                         segments_in,
                         translated_segments,
-                        [result for result in audio_results if result],
+                        [result for result in audio_results if result is not None],
+                        request.voice,
                         request.gender,
                     )
             except Exception:
@@ -630,29 +646,37 @@ async def dub_video(
     cached_audio_segments = _cached_dub_audio_segments(
         request.video_id,
         segments_in,
+        None,
         request.gender,
     )
     if cached_audio_segments:
         logger.info(
             "/api/dub TTS audio cache hit: %d segments gender=%s (video_id=%s)",
             len(cached_audio_segments),
-            _voice_cache_key(request.gender),
+            _voice_cache_key(None, request.gender),
             request.video_id,
         )
         return {"translated_segments": cached_audio_segments, "audio_url": None}
 
     translated_segments = []
     tts_failures = 0
+    _bracket_only = re.compile(r"^\s*(\[.*?\]\s*)+$")
     for i, seg in enumerate(translated):
-        mn_text = seg.translated_text
-        try:
-            audio_bytes = synthesize(mn_text, {"gender": request.gender})
-            audio_ms = audio_duration_ms_from_bytes(audio_bytes)
-            audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
-        except Exception:
-            logger.exception("/api/dub TTS failed segment %d", i)
+        mn_text = seg.translated_text or ""
+        # Blank text or bracket-only ([Music], etc.) is intentionally silent.
+        if not mn_text.strip() or _bracket_only.match(mn_text):
             audio_b64, audio_ms = "", 0
-            tts_failures += 1
+        else:
+            try:
+                audio_bytes = synthesize(mn_text, {"gender": request.gender})
+                audio_ms = audio_duration_ms_from_bytes(audio_bytes)
+                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            except EmptyTextError:
+                audio_b64, audio_ms = "", 0
+            except Exception:
+                logger.exception("/api/dub TTS failed segment %d", i)
+                audio_b64, audio_ms = "", 0
+                tts_failures += 1
 
         translated_segments.append({
             "start": seg.start,
@@ -679,6 +703,7 @@ async def dub_video(
                     segments_in,
                     translated,
                     translated_segments,
+                    None,
                     request.gender,
                 )
         except Exception:

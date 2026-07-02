@@ -27,9 +27,9 @@ type DubSegment = {
 
 const MAX_OVERLAPPING_DUB_AUDIO = 2;
 
-// Azure TTS streaming dub. Fetches the transcript, sends it to the backend
-// /process pipeline (translate + TTS), and plays each segment's audio synced
-// to the video. Supports pause/resume and volume control.
+// Azure TTS streaming dub. Reuses captions already fetched by useProcessedVideo,
+// sends them to the backend /process pipeline (translate + TTS), and plays each
+// segment's audio synced to the video.
 export function useDubAudio(
   videoId: string,
   currentTime: number,
@@ -49,9 +49,15 @@ export function useDubAudio(
     total: number;
   } | null>(null);
 
+  // Keyed by segment `start` (stable across renders) — array indices shift as
+  // streamed segments get sorted in, which previously restarted playing audio.
   const activeAudiosRef = useRef<Map<number, HTMLAudioElement>>(new Map());
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const activeIdxRef = useRef<number>(-1);
+  // Per-audio fit-rate: audio may be pitched to fit its target segment duration.
+  // We store it so slider-driven playbackRate changes preserve the fit factor
+  // instead of overwriting it with the raw slider value.
+  const fitRatesRef = useRef<WeakMap<HTMLAudioElement, number>>(new WeakMap());
+  const lastStartedKeyRef = useRef<number>(-1);
+  const prevTimeRef = useRef<number>(-1);
   const abortRef = useRef<AbortController | null>(null);
   const blobUrlsRef = useRef<string[]>([]);
   const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,8 +73,11 @@ export function useDubAudio(
       audio.src = "";
     });
     activeAudiosRef.current.clear();
-    audioRef.current = null;
-    activeIdxRef.current = -1;
+  }, []);
+
+  const revokeBlobUrls = useCallback(() => {
+    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    blobUrlsRef.current = [];
   }, []);
 
   const pauseAllAudio = useCallback(() => {
@@ -86,14 +95,10 @@ export function useDubAudio(
   const pruneOverlappingAudio = useCallback(() => {
     const entries = [...activeAudiosRef.current.entries()];
     while (entries.length > MAX_OVERLAPPING_DUB_AUDIO) {
-      const [idx, audio] = entries.shift()!;
+      const [key, audio] = entries.shift()!;
       audio.pause();
       audio.src = "";
-      activeAudiosRef.current.delete(idx);
-      if (activeIdxRef.current === idx) {
-        audioRef.current = null;
-        activeIdxRef.current = -1;
-      }
+      activeAudiosRef.current.delete(key);
     }
   }, []);
 
@@ -102,13 +107,13 @@ export function useDubAudio(
       if (flushRef.current) clearTimeout(flushRef.current);
       stopAllAudio();
       abortRef.current?.abort();
+      revokeBlobUrls();
     };
   }, []);
 
-  // Fetch transcript + stream translate/TTS when enabled or voice changes
+  // Build translate/TTS pipeline when video or voice changes. Toggling `enabled`
+  // does NOT rebuild — `builtKeyRef` makes it a pure on/off switch.
   useEffect(() => {
-    // Reuse the captions already fetched by useProcessedVideo — no second
-    // transcript fetch. Wait until they've arrived before building the dub.
     if (!videoId || !enabled || sourceSegments.length === 0) return;
 
     // Already built this video+voice → reuse it. This is what makes the dub
@@ -117,8 +122,11 @@ export function useDubAudio(
     if (builtKeyRef.current === buildKey) return;
 
     stopAllAudio();
-    activeIdxRef.current = -1;
+    lastStartedKeyRef.current = -1;
+    prevTimeRef.current = -1;
     abortRef.current?.abort();
+    // Release old blob URLs before allocating new ones for the rebuild.
+    revokeBlobUrls();
     const total = sourceSegments.length;
     const stateTimer = setTimeout(() => {
       setSegments([]);
@@ -136,7 +144,6 @@ export function useDubAudio(
     void (async () => {
       try {
         const built: DubSegment[] = [];
-
         let ttsCompleted = 0;
 
         await streamProcess(
@@ -148,6 +155,7 @@ export function useDubAudio(
               duration: s.duration,
               text: s.text,
             })),
+            voice: voiceId,
             gender,
           },
           {
@@ -237,23 +245,32 @@ export function useDubAudio(
       if (abortRef.current === controller) abortRef.current = null;
       if (flushRef.current) clearTimeout(flushRef.current);
     };
-  }, [videoId, enabled, sourceSegments, sourceLang, voiceId, stopAllAudio]);
+  }, [
+    videoId,
+    enabled,
+    sourceSegments,
+    sourceLang,
+    voiceId,
+    stopAllAudio,
+    revokeBlobUrls,
+  ]);
 
-  // Pause (but DON'T discard) the dub when the user switches back to the original
-  // audio, so re-enabling plays instantly from the already-built segments. The
-  // background build is left running/complete and its blobs are kept alive.
+  // Toggle-off: stop playback but KEEP segments + blob URLs alive so toggling
+  // back on plays instantly from the same built dub. Rebuild only happens when
+  // videoId or voiceId changes (see builtKeyRef above).
   useEffect(() => {
     if (enabled) return;
-    audioRef.current?.pause();
-    audioRef.current = null;
-    activeIdxRef.current = -1;
     stopAllAudio();
+    lastStartedKeyRef.current = -1;
+    prevTimeRef.current = -1;
   }, [enabled, stopAllAudio]);
 
-  // Apply playback rate changes to currently playing audio
+  // Apply playback rate changes to currently playing audio. Multiply by each
+  // audio's fit-rate so slider changes don't undo the duration-fit stretch.
   useEffect(() => {
     activeAudiosRef.current.forEach((audio) => {
-      audio.playbackRate = playbackRate;
+      const fit = fitRatesRef.current.get(audio) ?? 1;
+      audio.playbackRate = playbackRate * fit;
     });
   }, [playbackRate]);
 
@@ -274,20 +291,32 @@ export function useDubAudio(
     }
   }, [playing, enabled, pauseAllAudio, resumeAllAudio]);
 
-  // Sync audio to video playback time
+  // Sync audio to video playback time. Keys audio by segment `start` (stable
+  // across renders) so re-sorting the array as new segments stream in never
+  // restarts the currently-playing dub.
   useEffect(() => {
     if (!enabled || !playing || segments.length === 0) return;
 
-    const idx = segments.findIndex(
+    // Seek detection: the player time polls every ~250ms, so a jump larger than
+    // ~1.5s (scaled by playback rate) means the user seeked. Kill stale audio
+    // and allow the current segment to restart from the right offset.
+    const prev = prevTimeRef.current;
+    prevTimeRef.current = currentTime;
+    const seeked =
+      prev >= 0 &&
+      Math.abs(currentTime - prev) > Math.max(1.5, playbackRate * 1.5);
+    if (seeked) {
+      stopAllAudio();
+      lastStartedKeyRef.current = -1;
+    }
+
+    const seg = segments.find(
       (s) => currentTime >= s.start && currentTime < s.start + s.duration,
     );
-    if (idx === -1) return;
+    if (!seg || !seg.blobUrl) return;
 
     // Same segment already started for this playback pass; do not restart it.
-    if (idx === activeIdxRef.current) return;
-
-    const seg = segments[idx];
-    if (!seg.blobUrl) return;
+    if (seg.start === lastStartedKeyRef.current) return;
 
     const audio = new Audio(seg.blobUrl);
     const audioSeconds = seg.audioMs > 0 ? seg.audioMs / 1000 : 0;
@@ -297,19 +326,29 @@ export function useDubAudio(
         ? Math.min(1.35, Math.max(1, audioSeconds / targetSeconds))
         : 1;
 
+    // Landing mid-segment (seek or late-arriving audio): start the audio at the
+    // matching position instead of the segment's beginning. Audio media time
+    // advances fitRate× faster than video time, hence the scaling. Clamp to the
+    // audio's actual length so we never seek past the end (which throws).
+    const offset = currentTime - seg.start;
+    if (offset > 0.3 && audioSeconds > 0) {
+      audio.currentTime = Math.min(
+        offset * fitRate,
+        Math.max(0, audioSeconds - 0.05),
+      );
+    }
+
     audio.volume = Math.max(0, Math.min(1, volume / 100));
     audio.playbackRate = playbackRate * fitRate;
+    fitRatesRef.current.set(audio, fitRate);
+    const key = seg.start;
     audio.onended = () => {
-      activeAudiosRef.current.delete(idx);
-      if (activeIdxRef.current === idx) {
-        audioRef.current = null;
-        activeIdxRef.current = -1;
-      }
+      if (activeAudiosRef.current.get(key) === audio)
+        activeAudiosRef.current.delete(key);
     };
 
-    activeAudiosRef.current.set(idx, audio);
-    audioRef.current = audio;
-    activeIdxRef.current = idx;
+    activeAudiosRef.current.set(key, audio);
+    lastStartedKeyRef.current = key;
     pruneOverlappingAudio();
     audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e));
   }, [
@@ -324,6 +363,9 @@ export function useDubAudio(
   ]);
 
   // Translated lines for SubtitlePane (available as soon as translation lands).
+  // audio_ms is passed through so the pane can compute karaoke-style progress
+  // based on the actual TTS audio length (which the dub-speed slider affects),
+  // not just the segment's video-time duration.
   const translatedSegments: Segment[] = segments
     .filter((s) => s.translatedText !== null)
     .map((s) => ({
@@ -333,7 +375,7 @@ export function useDubAudio(
       source: "youtube_captions" as const,
       translated_text: s.translatedText,
       audio_path: null,
-      audio_ms: null,
+      audio_ms: s.audioMs > 0 ? s.audioMs : null,
       audio_b64: null,
     }));
 

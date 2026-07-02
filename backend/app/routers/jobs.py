@@ -10,12 +10,15 @@ import re
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
+from app.models.entities import UserProfile
 from app.models.dub_job import DubJob
 from app.services import dub_service, job_service
+from app.services.auth_service import get_current_user
 from app.services.dub_service import DubError
+from app.services.entitlement_service import require_video_access
 
 router = APIRouter(prefix="/jobs", tags=["dub"])
 
@@ -54,12 +57,17 @@ class CreateJobRequest(BaseModel):
 
 
 @router.post("", response_model=DubJob, status_code=status.HTTP_202_ACCEPTED)
-def create_job(req: CreateJobRequest, request: Request) -> DubJob:
+def create_job(
+    req: CreateJobRequest,
+    request: Request,
+    current_user: UserProfile = Depends(get_current_user),
+) -> DubJob:
     _rate_limit(request)
 
     video_id = req.video_id.strip()
     if not _VIDEO_ID_RE.match(video_id):
         raise HTTPException(status_code=400, detail="Invalid video_id.")
+    require_video_access(current_user, video_id, req.target_lang)
 
     try:
         return dub_service.start_dub(
@@ -81,10 +89,14 @@ def create_job(req: CreateJobRequest, request: Request) -> DubJob:
 
 
 @router.get("/{job_id}", response_model=DubJob)
-def read_job(job_id: str) -> DubJob:
+def read_job(
+    job_id: str,
+    current_user: UserProfile = Depends(get_current_user),
+) -> DubJob:
     job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+    require_video_access(current_user, job.video_id, job.target_lang)
     try:
         return dub_service.poll_dub(job)
     except Exception as exc:  # noqa: BLE001 — surface the real error for debugging

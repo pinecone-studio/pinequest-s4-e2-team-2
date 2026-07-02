@@ -1,6 +1,8 @@
 // Client-side transcript fetch (Vercel route) + SSE streaming of the backend
 // /process pipeline (translate + TTS), yielding one segment at a time.
 
+import { firebaseAuth } from "@/lib/firebase";
+
 export type TranscriptSegment = {
   start: number;
   duration: number;
@@ -86,6 +88,13 @@ function backendUrl(path: string): string {
   return `${base}${path}`;
 }
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const user = firebaseAuth.currentUser;
+  if (!user) return {};
+  const token = await user.getIdToken();
+  return { Authorization: `Bearer ${token}` };
+}
+
 // Fetches the transcript from our own Vercel API route (same-origin, no CORS).
 export async function fetchTranscript(
   videoId: string,
@@ -152,14 +161,17 @@ export async function streamProcess(
 
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     credentials: "include",
     body: JSON.stringify(payload),
     signal,
   });
 
   if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => "");
+    const body = (await response.clone().json().catch(() => null)) as
+      | { detail?: string }
+      | null;
+    const detail = body?.detail || (await response.text().catch(() => ""));
     console.error("[streamProcess] ✗ backend rejected request", {
       url,
       status: response.status,

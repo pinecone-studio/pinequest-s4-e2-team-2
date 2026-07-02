@@ -27,17 +27,21 @@ export function useTranslatedSubtitles(
     // When dub mode is on, useDubAudio (F5 /jobs) provides the translated
     // subtitles, so this Azure /process translate-only path stays idle.
     if (!enabled || !videoId || sourceSegments.length === 0) {
-      setSegments([]);
-      setLoading(false);
-      setError("");
-      return;
+      const resetTimer = setTimeout(() => {
+        setSegments([]);
+        setLoading(false);
+        setError("");
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
 
     let active = true;
     const controller = new AbortController();
-    setSegments([]);
-    setError("");
-    setLoading(true);
+    const initialStateTimer = setTimeout(() => {
+      setSegments([]);
+      setError("");
+      setLoading(true);
+    }, 0);
 
     // Pre-build the result array so translations can be placed by index as the
     // SSE stream delivers them (out-of-order delivery is fine).
@@ -125,6 +129,7 @@ export function useTranslatedSubtitles(
 
     return () => {
       active = false;
+      clearTimeout(initialStateTimer);
       controller.abort();
       if (flushRef.current) clearTimeout(flushRef.current);
     };

@@ -12,13 +12,17 @@ from app.models.entities import (
     ChatMessageRecord,
     ChatSessionCreate,
     ChatSessionRecord,
+    FreeVideoViewRecord,
     NoteCreate,
     NoteRecord,
     NoteUpdate,
+    SubscriptionStatus,
     SummaryCreate,
     SummaryRecord,
     SummarySearchResult,
     TranscriptSegmentRecord,
+    UserEntitlements,
+    UserPlan,
     UserProfile,
     VideoTranscriptCache,
     VideoAssetCreate,
@@ -96,7 +100,7 @@ def _local_user_lock(user_id: str) -> threading.RLock:
 
 
 def _empty_local_user_data() -> dict[str, Any]:
-    return {"history": {}, "notes": {}}
+    return {"history": {}, "notes": {}, "free_video_views": {}}
 
 
 def _normalize_local_user_data(data: Any) -> dict[str, Any]:
@@ -106,6 +110,8 @@ def _normalize_local_user_data(data: Any) -> dict[str, Any]:
         data["history"] = {}
     if not isinstance(data.get("notes"), dict):
         data["notes"] = {}
+    if not isinstance(data.get("free_video_views"), dict):
+        data["free_video_views"] = {}
     return data
 
 
@@ -177,20 +183,262 @@ def _local_count_notes(user_id: str, video_id: str) -> int:
     return sum(1 for note in data["notes"].values() if note.get("video_id") == video_id)
 
 
+class FreeVideoLimitExceeded(Exception):
+    pass
+
+
+def _safe_doc_id(*parts: str) -> str:
+    return "_".join(_safe_user_id(part) for part in parts)
+
+
+def _as_plan(value: Any) -> UserPlan:
+    try:
+        return UserPlan(value)
+    except ValueError:
+        return UserPlan.FREE
+
+
+def _as_subscription_status(value: Any) -> SubscriptionStatus:
+    try:
+        return SubscriptionStatus(value)
+    except ValueError:
+        return SubscriptionStatus.NONE
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            normalized = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    return None
+
+
+def _is_active_pro(current: dict[str, Any] | None) -> bool:
+    current = current or {}
+    plan = _as_plan(current.get("plan"))
+    status = _as_subscription_status(current.get("subscription_status"))
+    if plan != UserPlan.PRO or status != SubscriptionStatus.ACTIVE:
+        return False
+
+    period_end = _coerce_datetime(current.get("subscription_current_period_end"))
+    if period_end is None:
+        return True
+    if period_end.tzinfo is None:
+        period_end = period_end.replace(tzinfo=timezone.utc)
+    return period_end > utc_now()
+
+
+def _build_user_profile(
+    uid: str,
+    current: dict[str, Any] | None,
+    *,
+    email: str | None = None,
+    display_name: str | None = None,
+    avatar_url: str | None = None,
+    is_guest: bool | None = None,
+    last_login_at: datetime | None = None,
+) -> UserProfile:
+    current = current or {}
+    now = utc_now()
+    plan = _as_plan(current.get("plan"))
+    subscription_status = _as_subscription_status(current.get("subscription_status"))
+    period_end = _coerce_datetime(current.get("subscription_current_period_end"))
+    free_videos_used = _count_free_video_views(uid)
+    free_limit = FREE_VIDEO_LIMIT
+    is_pro = _is_active_pro(current)
+
+    return UserProfile(
+        id=uid,
+        email=email or current.get("email"),
+        display_name=display_name or current.get("display_name"),
+        avatar_url=avatar_url or current.get("avatar_url"),
+        is_guest=current.get("is_guest", False) if is_guest is None else is_guest,
+        plan=plan,
+        subscription_status=subscription_status,
+        subscription_provider=current.get("subscription_provider"),
+        subscription_current_period_end=period_end,
+        is_pro=is_pro,
+        free_video_limit=free_limit,
+        free_videos_used=free_videos_used,
+        free_videos_remaining=max(free_limit - free_videos_used, 0),
+        created_at=current.get("created_at", now),
+        updated_at=now,
+        last_login_at=last_login_at or current.get("last_login_at", now),
+    )
+
+
+def _entitlements_from_profile(profile: UserProfile) -> UserEntitlements:
+    can_use_paid_features = bool(profile.is_pro)
+    return UserEntitlements(
+        user_id=profile.id,
+        plan=profile.plan,
+        subscription_status=profile.subscription_status,
+        is_pro=profile.is_pro,
+        free_video_limit=profile.free_video_limit,
+        free_videos_used=profile.free_videos_used,
+        free_videos_remaining=profile.free_videos_remaining,
+        can_watch_video=profile.is_pro or profile.free_videos_remaining > 0,
+        can_use_notes=can_use_paid_features,
+        can_use_ai=can_use_paid_features,
+    )
+
+
+def _local_count_free_video_views(user_id: str) -> int:
+    data = _local_read_user_data(user_id)
+    return len(data["free_video_views"])
+
+
+def _count_free_video_views(user_id: str) -> int:
+    if _use_local_user_store():
+        return _local_count_free_video_views(user_id)
+
+    query = (
+        get_firestore_client()
+        .collection("free_video_views")
+        .where("user_id", "==", user_id)
+    )
+    return sum(1 for _ in _query_stream(query))
+
+
+def _local_has_free_video_view(user_id: str, video_id: str) -> bool:
+    data = _local_read_user_data(user_id)
+    return video_id in data["free_video_views"]
+
+
+def _has_free_video_view(user_id: str, video_id: str) -> bool:
+    if _use_local_user_store():
+        return _local_has_free_video_view(user_id, video_id)
+
+    doc_id = _safe_doc_id(user_id, video_id)
+    return get_firestore_client().collection("free_video_views").document(doc_id).get().exists
+
+
+def _local_create_free_video_view(
+    user_id: str,
+    video_id: str,
+    language_code: str = "mn",
+) -> FreeVideoViewRecord:
+    with _local_user_lock(user_id):
+        data = _local_read_user_data(user_id)
+        doc_id = _safe_doc_id(user_id, video_id)
+        current = data["free_video_views"].get(video_id)
+        if current:
+            return FreeVideoViewRecord(**current)
+        record = FreeVideoViewRecord(
+            id=doc_id,
+            user_id=user_id,
+            video_id=video_id,
+            language_code=language_code,
+        )
+        data["free_video_views"][video_id] = _dump_json(record)
+        _local_write_user_data(user_id, data)
+        return record
+
+
+def _create_free_video_view(
+    user_id: str,
+    video_id: str,
+    language_code: str = "mn",
+) -> FreeVideoViewRecord:
+    if _use_local_user_store():
+        return _local_create_free_video_view(user_id, video_id, language_code)
+
+    doc_id = _safe_doc_id(user_id, video_id)
+    record = FreeVideoViewRecord(
+        id=doc_id,
+        user_id=user_id,
+        video_id=video_id,
+        language_code=language_code,
+    )
+    get_firestore_client().collection("free_video_views").document(doc_id).set(_dump(record), merge=True)
+    return record
+
+
+def get_user_profile(user_id: str) -> UserProfile:
+    if _use_local_user_store():
+        data = _local_read_user_data(user_id)
+        return _build_user_profile(user_id, data.get("user", {}))
+
+    current = _doc_to_dict(get_firestore_client().collection("users").document(user_id).get()) or {}
+    return _build_user_profile(user_id, current)
+
+
+def get_user_entitlements(user_id: str) -> UserEntitlements:
+    return _entitlements_from_profile(get_user_profile(user_id))
+
+
+def set_user_subscription(
+    user_id: str,
+    *,
+    plan: UserPlan = UserPlan.PRO,
+    subscription_status: SubscriptionStatus = SubscriptionStatus.ACTIVE,
+    subscription_provider: str | None = None,
+    subscription_current_period_end: datetime | None = None,
+) -> UserProfile:
+    updates = {
+        "plan": plan.value,
+        "subscription_status": subscription_status.value,
+        "subscription_provider": subscription_provider,
+        "subscription_current_period_end": subscription_current_period_end,
+        "updated_at": utc_now(),
+    }
+    json_updates = {
+        key: value.isoformat() if isinstance(value, datetime) else value
+        for key, value in updates.items()
+        if value is not None
+    }
+
+    if _use_local_user_store():
+        with _local_user_lock(user_id):
+            data = _local_read_user_data(user_id)
+            current = data.get("user", {})
+            current.update(json_updates)
+            data["user"] = current
+            _local_write_user_data(user_id, data)
+        return get_user_profile(user_id)
+
+    get_firestore_client().collection("users").document(user_id).set(
+        {key: value for key, value in updates.items() if value is not None},
+        merge=True,
+    )
+    return get_user_profile(user_id)
+
+
+def record_video_access(
+    user_id: str,
+    video_id: str,
+    language_code: str = "mn",
+) -> UserEntitlements:
+    profile = get_user_profile(user_id)
+    if profile.is_pro:
+        return _entitlements_from_profile(profile)
+
+    if _has_free_video_view(user_id, video_id):
+        return _entitlements_from_profile(get_user_profile(user_id))
+
+    if profile.free_videos_used >= profile.free_video_limit:
+        raise FreeVideoLimitExceeded("Free video limit reached.")
+
+    _create_free_video_view(user_id, video_id, language_code=language_code)
+    return _entitlements_from_profile(get_user_profile(user_id))
+
+
 def _local_upsert_user_from_token(decoded_token: dict[str, Any]) -> UserProfile:
     uid = decoded_token["uid"]
     with _local_user_lock(uid):
         data = _local_read_user_data(uid)
         current = data.get("user", {})
-        now = utc_now()
-        user = UserProfile(
-            id=uid,
-            email=decoded_token.get("email") or current.get("email"),
-            display_name=decoded_token.get("name") or current.get("display_name"),
-            avatar_url=decoded_token.get("picture") or current.get("avatar_url"),
-            created_at=current.get("created_at", now),
-            updated_at=now,
-            last_login_at=now,
+        user = _build_user_profile(
+            uid,
+            current,
+            email=decoded_token.get("email"),
+            display_name=decoded_token.get("name"),
+            avatar_url=decoded_token.get("picture"),
+            last_login_at=utc_now(),
         )
         data["user"] = _dump_json(user)
         _local_write_user_data(uid, data)
@@ -263,18 +511,16 @@ def upsert_user_from_token(decoded_token: dict[str, Any]) -> UserProfile:
         return _local_upsert_user_from_token(decoded_token)
 
     uid = decoded_token["uid"]
-    now = utc_now()
     user_ref = get_firestore_client().collection("users").document(uid)
     current = _doc_to_dict(user_ref.get())
 
-    user = UserProfile(
-        id=uid,
-        email=decoded_token.get("email") or (current or {}).get("email"),
-        display_name=decoded_token.get("name") or (current or {}).get("display_name"),
-        avatar_url=decoded_token.get("picture") or (current or {}).get("avatar_url"),
-        created_at=(current or {}).get("created_at", now),
-        updated_at=now,
-        last_login_at=now,
+    user = _build_user_profile(
+        uid,
+        current,
+        email=decoded_token.get("email"),
+        display_name=decoded_token.get("name"),
+        avatar_url=decoded_token.get("picture"),
+        last_login_at=utc_now(),
     )
     user_ref.set(_dump(user), merge=True)
     return user
@@ -773,7 +1019,7 @@ def list_chat_messages(
 # otherwise falls back to JSON files under CACHE_DIR.
 # ---------------------------------------------------------------------------
 
-from app.config import DATABASE_URL, CACHE_DIR, get_settings
+from app.config import DATABASE_URL, CACHE_DIR, FREE_VIDEO_LIMIT, get_settings
 
 
 def get_cached_video(youtube_id: str) -> dict | None:

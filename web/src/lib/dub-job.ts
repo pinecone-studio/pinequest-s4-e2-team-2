@@ -3,6 +3,8 @@
 // Replaces the old Azure SSE /process flow: we create a job, then poll until the
 // GPU (Modal F5) finishes and each segment has a public R2 audio_url to play.
 
+import { firebaseAuth } from "@/lib/firebase";
+
 export type TranscriptSegment = { start: number; duration: number; text: string };
 
 export type DubJobSegment = {
@@ -29,6 +31,13 @@ function backendUrl(path: string): string {
   return `${base}${path}`;
 }
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const user = firebaseAuth.currentUser;
+  if (!user) return {};
+  const token = await user.getIdToken();
+  return { Authorization: `Bearer ${token}` };
+}
+
 // Create (or reuse, via backend cache/dedup) a dub job. Returns immediately with
 // the job — translation is already filled in; audio_url arrives once status=done.
 export async function createDubJob(
@@ -42,7 +51,8 @@ export async function createDubJob(
 ): Promise<DubJob> {
   const res = await fetch(backendUrl("/jobs"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    credentials: "include",
     body: JSON.stringify(payload),
     signal,
   });
@@ -54,7 +64,11 @@ export async function createDubJob(
 }
 
 export async function getDubJob(id: string, signal?: AbortSignal): Promise<DubJob> {
-  const res = await fetch(backendUrl(`/jobs/${id}`), { signal });
+  const res = await fetch(backendUrl(`/jobs/${id}`), {
+    headers: await authHeaders(),
+    credentials: "include",
+    signal,
+  });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { detail?: string } | null;
     throw new Error(body?.detail || `Job poll failed (${res.status}).`);

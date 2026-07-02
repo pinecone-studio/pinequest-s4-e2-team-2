@@ -18,6 +18,7 @@ from app.models.job import ProcessingJob
 from app.config import get_settings
 from app.services import cache_service
 from app.services.auth_service import get_current_user
+from app.services.entitlement_service import require_pro, require_video_access
 
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -43,6 +44,7 @@ def create_processing_job(
     payload: ProcessVideoRequest,
     current_user: UserProfile = Depends(get_current_user),
 ) -> ProcessingJob:
+    require_video_access(current_user, payload.video.youtube_video_id, payload.target_language)
     video = cache_service.upsert_video(payload.video)
     job = ProcessingJob(user_id=current_user.id, video_id=video.id)
     return cache_service.create_processing_job(job)
@@ -86,6 +88,7 @@ def read_video_transcript(
     video_id: str,
     current_user: UserProfile = Depends(get_current_user),
 ) -> VideoTranscriptCache:
+    require_video_access(current_user, video_id)
     try:
         transcript = cache_service.get_video_transcript(video_id)
     except Exception as exc:
@@ -102,6 +105,7 @@ def save_video_transcript(
     payload: VideoTranscriptCache,
     current_user: UserProfile = Depends(get_current_user),
 ) -> VideoTranscriptCache:
+    require_video_access(current_user, video_id)
     if payload.video_id != video_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -119,6 +123,7 @@ def create_note(
     payload: NoteCreate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> NoteRecord:
+    require_pro(current_user)
     if payload.video_id != video_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,6 +140,7 @@ def list_notes(
     video_id: str,
     current_user: UserProfile = Depends(get_current_user),
 ) -> list[NoteRecord]:
+    require_pro(current_user)
     try:
         return cache_service.list_notes(current_user.id, video_id)
     except Exception as exc:
@@ -169,6 +175,7 @@ def update_note(
     payload: NoteUpdate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> NoteRecord:
+    require_pro(current_user)
     try:
         return cache_service.update_note(current_user.id, note_id, payload)
     except KeyError as exc:
@@ -180,6 +187,7 @@ def delete_note(
     note_id: str,
     current_user: UserProfile = Depends(get_current_user),
 ) -> None:
+    require_pro(current_user)
     try:
         cache_service.delete_note(current_user.id, note_id)
     except KeyError as exc:

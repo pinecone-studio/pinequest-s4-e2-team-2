@@ -314,11 +314,7 @@ export default function AnimatedBackground() {
   // finished. Coming back, show them first so they can fade in again.
   const [textsGone, setTextsGone] = useState(false);
   useEffect(() => {
-    if (!searching) {
-      setTextsGone(false);
-      return;
-    }
-    const timer = setTimeout(() => setTextsGone(true), 500); // match duration-500
+    const timer = setTimeout(() => setTextsGone(searching), searching ? 500 : 0); // match duration-500
     return () => clearTimeout(timer);
   }, [searching]);
 

@@ -10,7 +10,6 @@ import { ArrowLeft } from "lucide-react";
 import { useVideoProcess } from "@/_comps/providers/VideoProcessProvider";
 import { VideoPane } from "@/_comps/dashboard/VideoPane";
 import { SubtitlePane } from "@/_comps/dashboard/SubtitlePane";
-import { VOICES } from "@/_comps/dashboard/voices";
 import { YTsidebar } from "@/_comps/ui/YTsidebar";
 import { AmbientBackground } from "./AmbientBackground";
 
@@ -24,8 +23,9 @@ export default function UserDashboard() {
     processProgress,
     dubMode,
     toggleDub,
+    voices,
     selectedVoiceId,
-    selectVoiceById,
+    selectVoice,
     dubVolume,
     setDubVolume,
     dubSpeed,
@@ -86,9 +86,9 @@ export default function UserDashboard() {
             dubProgress={dub.progress}
             dubError={dub.error}
             onToggleDub={toggleDub}
-            voices={VOICES}
+            voices={voices}
             selectedVoiceId={selectedVoiceId}
-            onSelectVoice={selectVoiceById}
+            onSelectVoice={selectVoice}
             dubVolume={dubVolume}
             ytVolume={ytVolume}
             onDubVolumeChange={setDubVolume}

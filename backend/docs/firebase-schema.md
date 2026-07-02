@@ -27,9 +27,126 @@ Firestore.
   "email": "user@example.com",
   "display_name": "User name",
   "avatar_url": "https://...",
+  "plan": "free",
+  "subscription_status": "none",
+  "subscription_provider": null,
+  "subscription_current_period_end": null,
+  "is_pro": false,
+  "free_video_limit": 3,
+  "free_videos_used": 0,
+  "free_videos_remaining": 3,
   "created_at": "timestamp",
   "updated_at": "timestamp",
   "last_login_at": "timestamp"
+}
+```
+
+`is_pro` and free-video counters are returned to the client as entitlement
+state. The payment provider webhook should update `plan`,
+`subscription_status`, `subscription_provider`, and
+`subscription_current_period_end`; the backend derives feature access from those
+fields.
+
+### free*video_views/{firebase_uid}*{youtube_video_id}
+
+One document per user/video pair. Free users can create up to
+`FREE_VIDEO_LIMIT` unique records. Reopening the same video does not consume an
+additional free view.
+
+```json
+{
+  "id": "uid_videoid",
+  "user_id": "firebase_uid",
+  "video_id": "dQw4w9WgXcQ",
+  "language_code": "mn",
+  "created_at": "timestamp"
+}
+```
+
+### subscriptions/{firebase_uid}
+
+QuickPay remains the source of truth for payment events; Firestore stores the
+latest entitlement state used by the app.
+
+```json
+{
+  "id": "firebase_uid",
+  "user_id": "firebase_uid",
+  "provider": "quickpay",
+  "provider_order_id": "payment_orders doc id",
+  "provider_invoice_id": "quickpay invoice id",
+  "provider_payment_id": "quickpay payment id",
+  "status": "active",
+  "current_period_start": "timestamp",
+  "current_period_end": "timestamp",
+  "last_paid_at": "timestamp",
+  "created_at": "timestamp",
+  "updated_at": "timestamp"
+}
+```
+
+### payment_orders/{order_id}
+
+One document per QuickPay invoice. The order owns the exact QuickPay invoice id, QR
+payload, bank deeplinks, last `/api/qpay/payments/check` response, and final payment id.
+Callbacks never directly trust the callback payload; the backend re-checks QuickPay
+before marking the order paid.
+
+```json
+{
+  "id": "order_id",
+  "user_id": "firebase_uid",
+  "provider": "quickpay",
+  "status": "pending",
+  "amount": 500,
+  "currency": "MNT",
+  "description": "Pro Monthly",
+  "contact": {
+    "id": "firebase_uid",
+    "registration_number": null,
+    "name": "User name",
+    "email": "user@example.com",
+    "phone": "99119911"
+  },
+  "items": [
+    {
+      "code": "pro_monthly",
+      "description": "Pro Monthly",
+      "quantity": 1,
+      "unit_price": 500
+    }
+  ],
+  "callback_url": "https://api.example.com/payments/quickpay/callback?order_id=order_id",
+  "qpay_sender_invoice_no": "order_id",
+  "qpay_invoice_id": "quickpay invoice id",
+  "qpay_payment_id": null,
+  "qpay_payment_status": null,
+  "qpay_paid_amount": null,
+  "qpay_invoice_response": {},
+  "qpay_check_response": null,
+  "qr_text": "000201...",
+  "qr_image": "base64 image",
+  "urls": [],
+  "created_at": "timestamp",
+  "updated_at": "timestamp",
+  "paid_at": null
+}
+```
+
+### Built-in payment plans
+
+Payment plan price and duration are configured in backend code. Frontend sends
+only `plan_id`; backend reads amount and days from the built-in plan before
+creating a QuickPay invoice. The current built-in plan is:
+
+```json
+{
+  "id": "pro_monthly",
+  "name": "Pro Monthly",
+  "amount": 500,
+  "currency": "MNT",
+  "days": 30,
+  "active": true
 }
 ```
 
@@ -53,7 +170,7 @@ records when different users open the same YouTube video.
 }
 ```
 
-### watch_history/{firebase_uid}_{youtube_video_id}
+### watch*history/{firebase_uid}*{youtube_video_id}
 
 One document per user/video pair.
 
@@ -202,6 +319,8 @@ ones this API will likely need are:
 
 ```text
 watch_history: user_id ASC, last_watched_at DESC
+free_video_views: user_id ASC, created_at DESC
+payment_orders: qpay_invoice_id ASC
 notes: user_id ASC, video_id ASC, timestamp_ms ASC
 summaries: video_id ASC, language_code ASC, created_at DESC
 chat_sessions/{session_id}/messages: created_at ASC
@@ -213,6 +332,12 @@ chat_sessions/{session_id}/messages: created_at ASC
 GET    /health
 GET    /auth/me
 POST   /auth/sync
+GET    /auth/entitlements
+POST   /payments/quickpay/create
+GET    /payments/quickpay/status/{order_id}
+GET    /payments/quickpay/orders/{order_id}
+POST   /payments/quickpay/callback
+GET    /payments/quickpay/callback
 POST   /videos
 POST   /videos/process
 GET    /videos/jobs/{job_id}

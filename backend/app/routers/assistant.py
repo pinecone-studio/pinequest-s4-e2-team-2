@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.models.entities import UserProfile
+from app.services.auth_service import get_current_user
 from app.services.assistant_service import (
     AssistantMode,
     AssistantRequestData,
     AssistantSegment,
     answer_assistant,
 )
+from app.services.entitlement_service import require_pro
 
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -26,7 +29,11 @@ class AssistantChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=AssistantChatResponse)
-def assistant_chat(request: AssistantChatRequest) -> AssistantChatResponse:
+def assistant_chat(
+    request: AssistantChatRequest,
+    current_user: UserProfile = Depends(get_current_user),
+) -> AssistantChatResponse:
+    require_pro(current_user)
     if request.mode == "question" and not (request.question or "").strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -14,10 +14,11 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.models.entities import UserProfile
 from app.utils.audio import audio_duration_ms_from_bytes
 from app.services.translator import (
     TRANSLATION_CACHE_VERSION,
@@ -28,6 +29,8 @@ from app.services.translator import (
 from app.services.tts_service import EmptyTextError, synthesize
 from app.services.summary_service import summarize
 from app.services.cache_service import get_cached_video, cache_video, save_summary, get_latest_summary
+from app.services.auth_service import get_current_user
+from app.services.entitlement_service import require_pro, require_video_access
 from app.models.entities import SummaryCreate
 from app.models.segment import Segment
 
@@ -56,6 +59,16 @@ class ProcessRequest(BaseModel):
 
 class SummaryRequest(BaseModel):
     video_id: str
+
+
+def _normalized_video_id(video_id: str | None) -> str:
+    value = (video_id or "").strip()
+    if not value:
+        raise HTTPException(
+            status_code=400,
+            detail="video_id is required for Mongolian video access.",
+        )
+    return value
 
 
 def _sse(obj: dict) -> str:
@@ -321,7 +334,12 @@ def _cache_dub_audio_segments(
 
 
 @router.post("/process")
-async def process_video(request: ProcessRequest):
+async def process_video(
+    request: ProcessRequest,
+    current_user: UserProfile = Depends(get_current_user),
+):
+    video_id = _normalized_video_id(request.video_id)
+    require_video_access(current_user, video_id)
     segments_in = request.segments
 
     # ── Log what the transcript route RECEIVED from the client ──────────
@@ -583,9 +601,14 @@ class DubRequest(BaseModel):
 
 
 @router.post("/api/dub")
-async def dub_video(request: DubRequest):
+async def dub_video(
+    request: DubRequest,
+    current_user: UserProfile = Depends(get_current_user),
+):
     """Chrome extension endpoint — same pipeline as /process but returns plain JSON
     (not SSE) so the extension can call response.json() directly."""
+    video_id = _normalized_video_id(request.video_id)
+    require_video_access(current_user, video_id)
     if not request.segments:
         raise HTTPException(status_code=400, detail="No segments provided.")
 
@@ -691,7 +714,11 @@ async def dub_video(request: DubRequest):
 
 
 @router.post("/summary")
-async def get_summary(request: SummaryRequest):
+async def get_summary(
+    request: SummaryRequest,
+    current_user: UserProfile = Depends(get_current_user),
+):
+    require_pro(current_user)
     existing = get_latest_summary(request.video_id)
     if existing:
         return {"video_id": request.video_id, "summary": existing.summary_text}

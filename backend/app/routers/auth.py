@@ -1,8 +1,9 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
-from app.models.entities import UserProfile
+from app.models.entities import SubscriptionStatus, UserEntitlements, UserPlan, UserProfile
 from app.services import cache_service, session_service
+from app.services.entitlement_service import get_entitlements
 from app.services.auth_service import get_current_user
 from app.services.firebase_service import get_firebase_app
 
@@ -20,6 +21,11 @@ def read_current_user(current_user: UserProfile = Depends(get_current_user)) -> 
 @router.post("/sync", response_model=UserProfile)
 def sync_current_user(current_user: UserProfile = Depends(get_current_user)) -> UserProfile:
     return current_user
+
+
+@router.get("/entitlements", response_model=UserEntitlements)
+def read_entitlements(current_user: UserProfile = Depends(get_current_user)) -> UserEntitlements:
+    return get_entitlements(current_user)
 
 
 # --- Guest / tester sessions (no Firebase required) ---
@@ -162,6 +168,12 @@ def demo_login() -> RegisterResponse:
                 "name": firebase_user.display_name or demo["name"],
                 "picture": firebase_user.photo_url,
             }
+        )
+        user = cache_service.set_user_subscription(
+            firebase_user.uid,
+            plan=UserPlan.PRO,
+            subscription_status=SubscriptionStatus.ACTIVE,
+            subscription_provider="demo",
         )
         custom_token = firebase_auth.create_custom_token(firebase_user.uid).decode("utf-8")
         return RegisterResponse(user=user, custom_token=custom_token)

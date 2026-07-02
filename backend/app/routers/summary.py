@@ -12,6 +12,7 @@ from app.models.entities import (
 )
 from app.services import cache_service
 from app.services.auth_service import get_current_user
+from app.services.entitlement_service import require_pro
 
 
 router = APIRouter(prefix="/summaries", tags=["summaries"])
@@ -22,6 +23,7 @@ def save_summary(
     payload: SummaryCreate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> SummaryRecord:
+    require_pro(current_user)
     return cache_service.save_summary(current_user.id, payload)
 
 
@@ -31,6 +33,7 @@ def search_summaries(
     limit: int = Query(default=20, ge=1, le=50),
     current_user: UserProfile = Depends(get_current_user),
 ) -> list[SummarySearchResult]:
+    require_pro(current_user)
     return cache_service.search_summaries(current_user.id, q, limit=limit)
 
 
@@ -39,6 +42,7 @@ def create_chat_session(
     payload: ChatSessionCreate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> ChatSessionRecord:
+    require_pro(current_user)
     return cache_service.create_chat_session(current_user.id, payload)
 
 
@@ -52,6 +56,7 @@ def append_chat_message(
     payload: ChatMessageCreate,
     current_user: UserProfile = Depends(get_current_user),
 ) -> ChatMessageRecord:
+    require_pro(current_user)
     try:
         return cache_service.append_chat_message(current_user.id, session_id, payload)
     except KeyError as exc:
@@ -67,6 +72,7 @@ def list_chat_messages(
     limit: int = Query(default=50, ge=1, le=100),
     current_user: UserProfile = Depends(get_current_user),
 ) -> list[ChatMessageRecord]:
+    require_pro(current_user)
     try:
         return cache_service.list_chat_messages(current_user.id, session_id, limit=limit)
     except KeyError as exc:
@@ -82,6 +88,7 @@ def read_latest_summary(
     language_code: str = Query(default="mn", min_length=2, max_length=12),
     current_user: UserProfile = Depends(get_current_user),
 ) -> SummaryRecord:
+    require_pro(current_user)
     summary = cache_service.get_latest_summary(video_id, language_code=language_code)
     if not summary:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Summary not found.")

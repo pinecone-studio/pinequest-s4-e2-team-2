@@ -87,7 +87,6 @@ const UIContext = createContext<UIContextType | undefined>(undefined);
 
 export const UIProvider = ({ children }: { children: ReactNode }) => {
   const { user, paid } = useAuth();
-  const [isSubscribed, setIsSubscribed] = useState(false);
   const [allowAccess, setAllowAccess] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -105,9 +104,7 @@ export const UIProvider = ({ children }: { children: ReactNode }) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
 
-  useEffect(() => {
-    setIsSubscribed(Boolean(user && paid));
-  }, [user, paid]);
+  const isSubscribed = Boolean(user && paid);
 
   const loadHistory = useCallback(() => {
     setHistoryLoading(true);
@@ -195,8 +192,11 @@ export const UIProvider = ({ children }: { children: ReactNode }) => {
   );
 
   useEffect(() => {
-    if (user) loadHistory();
-    else setHistory([]);
+    const timer = window.setTimeout(() => {
+      if (user) loadHistory();
+      else setHistory([]);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [user, loadHistory]);
 
   return (

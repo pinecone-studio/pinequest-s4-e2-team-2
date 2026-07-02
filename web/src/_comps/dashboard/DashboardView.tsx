@@ -298,7 +298,6 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
-  const dub = useDubAudio(videoId, player.time, player.playing, dubMode === "mongolian", selectedVoiceId, player.playbackRate, dubVolume);
   // Fetches captions for the selected video (Path A, client-side) and exposes
   // them as `processedSegments` for the SubtitlePane to render.
   const {
@@ -307,6 +306,7 @@ export default function DashboardView({
     error: processingError,
     sourceLang,
   } = useProcessedVideo(videoId);
+  const dub = useDubAudio(videoId, player.time, player.playing, dubMode === "mongolian", processedSegments, sourceLang, selectedVoiceId, player.playbackRate, dubVolume);
   // Translate-only subtitles (Azure /process, no TTS) ONLY when dub is OFF —
   // when dub is on, useDubAudio supplies the translated subtitles instead.
   const translatedSubs = useTranslatedSubtitles(
@@ -443,10 +443,13 @@ export default function DashboardView({
   // Unlock browser autoplay gate on first user interaction, then toggle dub.
   const handleToggleDub = useCallback(() => {
     try {
-      const ctx: AudioContext = new (
-        (window as any).AudioContext ?? (window as any).webkitAudioContext
-      )();
-      void ctx.resume().then(() => ctx.close());
+      const AudioContextConstructor =
+        window.AudioContext ??
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextConstructor) {
+        const ctx = new AudioContextConstructor();
+        void ctx.resume().then(() => ctx.close());
+      }
     } catch {}
     setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"));
   }, []);

@@ -26,15 +26,56 @@ class ChatRole(str, Enum):
     SYSTEM = "system"
 
 
+class UserPlan(str, Enum):
+    FREE = "free"
+    PRO = "pro"
+
+
+class SubscriptionStatus(str, Enum):
+    NONE = "none"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+
+
 class UserProfile(BaseModel):
     id: str
     email: str | None = None
     display_name: str | None = None
     avatar_url: str | None = None
     is_guest: bool = False
+    plan: UserPlan = UserPlan.FREE
+    subscription_status: SubscriptionStatus = SubscriptionStatus.NONE
+    subscription_provider: str | None = None
+    subscription_current_period_end: datetime | None = None
+    is_pro: bool = False
+    free_video_limit: int = Field(default=3, ge=0)
+    free_videos_used: int = Field(default=0, ge=0)
+    free_videos_remaining: int = Field(default=3, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     last_login_at: datetime = Field(default_factory=utc_now)
+
+
+class FreeVideoViewRecord(BaseModel):
+    id: str
+    user_id: str
+    video_id: str
+    language_code: str = Field(default="mn", min_length=2, max_length=12)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class UserEntitlements(BaseModel):
+    user_id: str
+    plan: UserPlan = UserPlan.FREE
+    subscription_status: SubscriptionStatus = SubscriptionStatus.NONE
+    is_pro: bool = False
+    free_video_limit: int = Field(default=3, ge=0)
+    free_videos_used: int = Field(default=0, ge=0)
+    free_videos_remaining: int = Field(default=3, ge=0)
+    can_watch_video: bool = True
+    can_use_notes: bool = False
+    can_use_ai: bool = False
 
 
 class VideoUpsert(BaseModel):

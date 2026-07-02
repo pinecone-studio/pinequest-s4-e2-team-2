@@ -15,9 +15,77 @@ export type UserProfile = {
   display_name: string | null;
   avatar_url: string | null;
   is_guest: boolean;
+  plan: "free" | "pro";
+  subscription_status: "none" | "active" | "past_due" | "canceled";
+  subscription_provider: string | null;
+  subscription_current_period_end: string | null;
+  is_pro: boolean;
+  free_video_limit: number;
+  free_videos_used: number;
+  free_videos_remaining: number;
   created_at: string;
   updated_at: string;
   last_login_at: string;
+};
+
+export type UserEntitlements = {
+  user_id: string;
+  plan: "free" | "pro";
+  subscription_status: "none" | "active" | "past_due" | "canceled";
+  is_pro: boolean;
+  free_video_limit: number;
+  free_videos_used: number;
+  free_videos_remaining: number;
+  can_watch_video: boolean;
+  can_use_notes: boolean;
+  can_use_ai: boolean;
+};
+
+export type PaymentStatus = "pending" | "paid" | "failed" | "canceled" | "expired";
+
+export type QPayBankUrl = {
+  name: string | null;
+  description: string | null;
+  link: string | null;
+  logo: string | null;
+};
+
+export type PaymentOrderRecord = {
+  id: string;
+  user_id: string;
+  provider: "quickpay";
+  status: PaymentStatus;
+  plan_id: string | null;
+  subscription_days: number | null;
+  amount: number;
+  currency: string;
+  description: string;
+  callback_url: string | null;
+  qpay_sender_invoice_no: string;
+  qpay_invoice_id: string | null;
+  qpay_payment_id: string | null;
+  qpay_payment_status: string | null;
+  qpay_paid_amount: number | null;
+  qr_text: string | null;
+  qr_image: string | null;
+  urls: QPayBankUrl[];
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  paid_at: string | null;
+};
+
+export type QPayCreatePaymentResponse = {
+  order: PaymentOrderRecord;
+  invoice_id: string | null;
+  qr_text: string | null;
+  qr_image: string | null;
+  urls: QPayBankUrl[];
+};
+
+export type QPayPaymentStatusResponse = {
+  order: PaymentOrderRecord;
+  paid: boolean;
 };
 
 export type RegisterResponse = {
@@ -150,6 +218,23 @@ export function getCurrentUser(idToken?: string): Promise<UserProfile> {
     "/auth/me",
     idToken ? { headers: { Authorization: `Bearer ${idToken}` } } : {},
   );
+}
+
+export function getEntitlements(): Promise<UserEntitlements> {
+  return apifetch<UserEntitlements>("/auth/entitlements");
+}
+
+// ===== Payments =====
+
+export function createQPayPayment(): Promise<QPayCreatePaymentResponse> {
+  return apifetch<QPayCreatePaymentResponse>("/payments/quickpay/create", {
+    method: "POST",
+    data: { plan_id: "pro_monthly" },
+  });
+}
+
+export function getQPayPaymentStatus(orderId: string): Promise<QPayPaymentStatusResponse> {
+  return apifetch<QPayPaymentStatusResponse>(`/payments/quickpay/status/${orderId}`);
 }
 
 // ===== Watch history =====

@@ -31,7 +31,7 @@ import { useYouTubePlayer } from "@/_comps/dashboard/useYouTubePlayer";
 import { useProcessedVideo } from "@/_comps/dashboard/useProcessedVideo";
 import { useTranslatedSubtitles } from "@/_comps/dashboard/useTranslatedSubtitles";
 import { useDubAudio } from "@/_comps/dashboard/useDubAudio";
-import { DEFAULT_VOICE_ID, VOICES } from "@/_comps/dashboard/voices";
+import { DEFAULT_VOICE_ID, VOICES, type Voice } from "@/_comps/dashboard/voices";
 import type { ProcessStage } from "@/_comps/dashboard/VideoPane";
 import type { YouTubeSearchResult } from "@/lib/youtube-search";
 import type { Segment } from "@/lib/backend-api";
@@ -89,10 +89,15 @@ interface VideoProcessContextType {
   // ── Dub controls ─────────────────────────────────────────────────
   dubMode: DubMode;
   toggleDub: () => void;
+  voices: Voice[];
+  selectedVoiceId: string;
+  selectVoice: (id: string) => void;
+  // Gender is derived from `selectedVoiceId` but exposed as an ergonomic
+  // shortcut for the settings gender toggle (there's one voice per gender).
   voiceGender: VoiceGender;
   toggleGender: () => void;
   setVoiceGender: (g: VoiceGender) => void;
-  selectedVoiceId: string;
+  // Alias for `selectVoice` retained for callers that pass a voice ID directly.
   selectVoiceById: (voiceId: string) => void;
   dubVolume: number;
   setDubVolume: (v: number) => void;
@@ -112,22 +117,22 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   const [selectedVideo, setSelectedVideo] = useState<VideoSelection | null>(
     null,
   );
-  const [dubMode, setDubMode] = useState<DubMode>("original");
-  const [voiceGender, setVoiceGender] = useState<VoiceGender>("male");
+  // Dub is ON by default — selecting a video should translate + dub in one pass
+  // (the subtitle-only translate path stays idle while dubbing, see below).
+  const [dubMode, setDubMode] = useState<DubMode>("mongolian");
+  const [selectedVoiceId, setSelectedVoiceId] =
+    useState<string>(DEFAULT_VOICE_ID);
   const [dubVolume, setDubVolume] = useState<number>(100);
   const [dubSpeed, setDubSpeed] = useState<number>(1.0);
   const [ytVolume, setYtVolume] = useState<number>(20);
 
-  // Voice ID is derived from gender — one voice per gender in the VOICES table.
-  const selectedVoiceId = useMemo(
-    () => VOICES.find((v) => v.gender === voiceGender)?.id ?? DEFAULT_VOICE_ID,
-    [voiceGender],
+  // Gender is derived from the currently selected voice — every voice in the
+  // VOICES table declares its gender, so this stays consistent.
+  const voiceGender = useMemo<VoiceGender>(
+    () =>
+      VOICES.find((v) => v.id === selectedVoiceId)?.gender ?? "male",
+    [selectedVoiceId],
   );
-
-  const selectVoiceById = useCallback((voiceId: string) => {
-    const voice = VOICES.find((v) => v.id === voiceId);
-    if (voice) setVoiceGender(voice.gender);
-  }, []);
 
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -161,13 +166,16 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     dubMode !== "mongolian",
   );
 
-  // Dub audio: video's playback rate multiplied by the user's dub-speed pref, so
-  // slowing the YouTube player also slows the dub proportionally.
+  // Dub audio: reuses captions from useProcessedVideo so we don't fetch the
+  // transcript twice. Playback rate multiplies the YouTube player's rate by the
+  // user's dub-speed preference so slowing the player also slows the dub.
   const dub = useDubAudio(
     videoId,
     player.time,
     player.playing,
     dubMode === "mongolian",
+    processedSegments,
+    sourceLang,
     selectedVoiceId,
     player.playbackRate * dubSpeed,
     dubVolume,
@@ -312,25 +320,43 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     setDubMode((m) => (m === "mongolian" ? "original" : "mongolian"));
   }, []);
 
-  const toggleGender = useCallback(
-    () => setVoiceGender((g) => (g === "male" ? "female" : "male")),
-    [],
-  );
+  const selectVoice = useCallback((id: string) => setSelectedVoiceId(id), []);
+  // Alias — some callers pass a voice ID by different name; keep both to avoid
+  // churning the many components that already use one or the other.
+  const selectVoiceById = selectVoice;
+
+  const setVoiceGender = useCallback((gender: VoiceGender) => {
+    const match = VOICES.find((v) => v.gender === gender);
+    if (match) setSelectedVoiceId(match.id);
+  }, []);
+
+  const toggleGender = useCallback(() => {
+    setSelectedVoiceId((current) => {
+      const cur = VOICES.find((v) => v.id === current);
+      const next = VOICES.find((v) => v.gender !== (cur?.gender ?? "male"));
+      return next?.id ?? current;
+    });
+  }, []);
 
   // Keep the state machine in sync with the pipeline: while it's fetching /
   // translating / dubbing the selected video, we're "processing"; when it settles
   // (ready or idle) and we weren't mid-search, clear the action.
   useEffect(() => {
     if (!videoId) return;
-    if (
-      processStage === "fetching" ||
-      processStage === "translating" ||
-      processStage === "dubbing"
-    ) {
-      setVideoAction("processing");
-    } else if (processStage === "ready" || processStage === "idle") {
-      setVideoAction((a) => (a === "processing" || a === "selecting" ? null : a));
-    }
+    const stateTimer = setTimeout(() => {
+      if (
+        processStage === "fetching" ||
+        processStage === "translating" ||
+        processStage === "dubbing"
+      ) {
+        setVideoAction("processing");
+      } else if (processStage === "ready" || processStage === "idle") {
+        setVideoAction((a) =>
+          a === "processing" || a === "selecting" ? null : a,
+        );
+      }
+    }, 0);
+    return () => clearTimeout(stateTimer);
   }, [processStage, videoId]);
 
   const value: VideoProcessContextType = {
@@ -355,10 +381,12 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     processProgress,
     dubMode,
     toggleDub,
+    voices: VOICES,
+    selectedVoiceId,
+    selectVoice,
     voiceGender,
     toggleGender,
     setVoiceGender,
-    selectedVoiceId,
     selectVoiceById,
     dubVolume,
     setDubVolume,

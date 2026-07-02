@@ -1,8 +1,11 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.models.entities import UserProfile
+from app.services.auth_service import get_current_user
+from app.services.entitlement_service import require_video_access
 from app.services.tts_service import synthesize
 from app.utils.audio import save_audio, audio_url_path, audio_duration_ms
 
@@ -24,7 +27,11 @@ class TTSResponse(BaseModel):
 
 
 @router.post("", response_model=TTSResponse)
-def synthesize_segment(request: TTSRequest):
+def synthesize_segment(
+    request: TTSRequest,
+    current_user: UserProfile = Depends(get_current_user),
+):
+    require_video_access(current_user, request.video_id)
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
 

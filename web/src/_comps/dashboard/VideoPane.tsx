@@ -1,10 +1,15 @@
 "use client"
 
 import React, { type ReactNode, type RefObject } from "react"
+import { Settings } from "lucide-react"
 import { SOURCE_LINE, type Note } from "./data"
 import { VideoFrame } from "./VideoFrame"
 import type { DubStep } from "./useDubAudio"
 import type { Voice } from "./voices"
+
+function genderLabel(gender: "male" | "female"): string {
+  return gender === "male" ? "Эрэгтэй" : "Эмэгтэй"
+}
 
 export type ProcessStage =
   | "idle"
@@ -36,6 +41,8 @@ type VideoPaneProps = {
   onSelectVoice?: (voiceId: string) => void
   onDubVolumeChange?: (v: number) => void
   onYtVolumeChange?: (v: number) => void
+  dubSpeed?: number
+  onDubSpeedChange?: (v: number) => void
   quality?: string
   availableQualities?: string[]
   ccEnabled?: boolean
@@ -85,6 +92,31 @@ function VolumeRow({
   )
 }
 
+// Speed row uses fixed 0.5x–2x range with 0.05 step; value display shows "1.00x".
+function SpeedRow({
+  label, value, onChange, disabled,
+}: {
+  label: string; value: number
+  onChange: (v: number) => void; disabled?: boolean
+}) {
+  const min = 0.5
+  const max = 2.0
+  const pct = Math.round(((value - min) / (max - min)) * 100)
+  return (
+    <div className="dub-vol-row">
+      <span className="dub-vol-label">{label}</span>
+      <input
+        type="range" min={min} max={max} step={0.05} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        className="dub-vol-slider"
+        style={{ "--fill": `${pct}%` } as React.CSSProperties}
+      />
+      <span className="dub-vol-value">{value.toFixed(2)}x</span>
+    </div>
+  )
+}
+
 export function VideoPane(props: VideoPaneProps) {
   const [settingsOpen, setSettingsOpen] = React.useState(false)
 
@@ -102,7 +134,8 @@ export function VideoPane(props: VideoPaneProps) {
     (isMongolian || isLoading) &&
     (
       !!(props.voices && props.onSelectVoice) ||
-      !!(props.onDubVolumeChange && props.onYtVolumeChange)
+      !!(props.onDubVolumeChange && props.onYtVolumeChange) ||
+      !!props.onDubSpeedChange
     )
 
   const hasAnySettings = props.hasVideo && hasDubSettings
@@ -167,8 +200,10 @@ export function VideoPane(props: VideoPaneProps) {
                 className={`settings-gear-btn${settingsOpen ? " is-open" : ""}`}
                 title="Тохиргоо"
                 aria-expanded={settingsOpen}
+                aria-label="Тохиргоо"
               >
-                ⚙
+                <Settings size={20} strokeWidth={2} aria-hidden />
+                <span className="settings-gear-label">Тохиргоо</span>
               </button>
             )}
           </div>
@@ -180,17 +215,18 @@ export function VideoPane(props: VideoPaneProps) {
                 <>
                   {props.voices && props.onSelectVoice && (
                     <div className="settings-section">
-                      <span className="settings-section-label">ХООЛОЙ</span>
-                      <div className="dub-voice-picker" role="group" aria-label="Хоолой сонгох">
+                      <span className="settings-section-label">ХҮЙС</span>
+                      <div className="dub-voice-picker" role="group" aria-label="Хүйс сонгох">
                         {props.voices.map((v) => (
                           <button
                             key={v.id}
                             onClick={props.selectedVoiceId !== v.id ? () => props.onSelectVoice!(v.id) : undefined}
                             disabled={isLoading}
                             className={`dub-voice-card${props.selectedVoiceId === v.id ? " is-selected" : ""}`}
+                            aria-pressed={props.selectedVoiceId === v.id}
                           >
-                            <span className="dub-voice-name">{v.name}</span>
-                            <span className="dub-voice-gender">{v.gender === "male" ? "♂" : "♀"}</span>
+                            <span className="dub-voice-gender" aria-hidden>{v.gender === "male" ? "♂" : "♀"}</span>
+                            <span className="dub-voice-name">{genderLabel(v.gender)}</span>
                           </button>
                         ))}
                       </div>
@@ -212,6 +248,20 @@ export function VideoPane(props: VideoPaneProps) {
                           value={props.ytVolume ?? 20}
                           max={50}
                           onChange={props.onYtVolumeChange}
+                          disabled={isLoading}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {props.onDubSpeedChange && (
+                    <div className="settings-section">
+                      <span className="settings-section-label">ХУРД</span>
+                      <div className="dub-vol-section">
+                        <SpeedRow
+                          label="Дубын хурд"
+                          value={props.dubSpeed ?? 1}
+                          onChange={props.onDubSpeedChange}
                           disabled={isLoading}
                         />
                       </div>

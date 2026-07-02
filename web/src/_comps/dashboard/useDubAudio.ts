@@ -33,8 +33,15 @@ export function useDubAudio(
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
+  // Keyed by segment `start` (stable across renders) — array indices shift as
+  // streamed segments get sorted in, which previously restarted playing audio.
   const activeAudiosRef = useRef<Map<number, HTMLAudioElement>>(new Map())
-  const lastStartedIdxRef = useRef<number>(-1)
+  // Per-audio fit-rate: audio may be pitched to fit its target segment duration.
+  // We store it so slider-driven playbackRate changes preserve the fit factor
+  // instead of overwriting it with the raw slider value.
+  const fitRatesRef = useRef<WeakMap<HTMLAudioElement, number>>(new WeakMap())
+  const lastStartedKeyRef = useRef<number>(-1)
+  const prevTimeRef = useRef<number>(-1)
   const abortRef = useRef<AbortController | null>(null)
   const blobUrlsRef = useRef<string[]>([])
   const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -45,6 +52,11 @@ export function useDubAudio(
       audio.src = ""
     })
     activeAudiosRef.current.clear()
+  }, [])
+
+  const revokeBlobUrls = useCallback(() => {
+    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    blobUrlsRef.current = []
   }, [])
 
   const pauseAllAudio = useCallback(() => {
@@ -74,6 +86,7 @@ export function useDubAudio(
       if (flushRef.current) clearTimeout(flushRef.current)
       stopAllAudio()
       abortRef.current?.abort()
+      revokeBlobUrls()
     }
   }, [])
 
@@ -82,8 +95,10 @@ export function useDubAudio(
     if (!videoId || !enabled) return
 
     stopAllAudio()
-    lastStartedIdxRef.current = -1
+    lastStartedKeyRef.current = -1
+    prevTimeRef.current = -1
     abortRef.current?.abort()
+    revokeBlobUrls()
     setSegments([])
     setError(null)
     setStep("fetching")
@@ -104,8 +119,12 @@ export function useDubAudio(
 
         let ttsCompleted = 0
 
+        // Send gender alongside voice as a hint — the backend keys its TTS
+        // audio cache by voice ID, but gender is still useful for logging and
+        // fallback if voice ID is somehow lost in transit.
+        const inferredGender = voiceId.includes("Yesui") ? "female" : "male"
         await streamProcess(
-          { video_id: videoId, source_lang: transcript.source_lang, segments: transcript.segments, voice: voiceId },
+          { video_id: videoId, source_lang: transcript.source_lang, segments: transcript.segments, voice: voiceId, gender: inferredGender },
           {
             onSegment: (seg: StreamedSegment, index: number, segTotal: number) => {
               if (controller.signal.aborted) return
@@ -169,25 +188,29 @@ export function useDubAudio(
       if (abortRef.current === controller) abortRef.current = null
       if (flushRef.current) clearTimeout(flushRef.current)
     }
-  }, [videoId, enabled, voiceId, stopAllAudio])
+  }, [videoId, enabled, voiceId, stopAllAudio, revokeBlobUrls])
 
-  // Pause (but DON'T discard) the dub when the user switches back to the original
-  // audio, so re-enabling plays instantly from the already-built segments. The
-  // background build is left running/complete and its blobs are kept alive.
+  // Tear the dub down when the user switches back to the original audio. The
+  // in-flight build (if any) is aborted by the fetch effect's cleanup; re-enabling
+  // refetches, which is fast thanks to the backend translation/TTS cache.
   useEffect(() => {
     if (enabled) return
     stopAllAudio()
-    lastStartedIdxRef.current = -1
+    lastStartedKeyRef.current = -1
+    prevTimeRef.current = -1
+    revokeBlobUrls()
     setSegments([])
     setError(null)
     setProgress(null)
     setStep("idle")
-  }, [enabled, stopAllAudio])
+  }, [enabled, stopAllAudio, revokeBlobUrls])
 
-  // Apply playback rate changes to currently playing audio
+  // Apply playback rate changes to currently playing audio. Multiply by each
+  // audio's fit-rate so slider changes don't undo the duration-fit stretch.
   useEffect(() => {
     activeAudiosRef.current.forEach((audio) => {
-      audio.playbackRate = playbackRate
+      const fit = fitRatesRef.current.get(audio) ?? 1
+      audio.playbackRate = playbackRate * fit
     })
   }, [playbackRate])
 
@@ -212,16 +235,24 @@ export function useDubAudio(
   useEffect(() => {
     if (!enabled || !playing || segments.length === 0) return
 
-    const idx = segments.findIndex(
+    // Seek detection: the player time polls every ~250ms, so a jump larger than
+    // ~1.5s (scaled by playback rate) means the user seeked. Kill stale audio and
+    // allow the current segment to restart from the right offset.
+    const prev = prevTimeRef.current
+    prevTimeRef.current = currentTime
+    const seeked = prev >= 0 && Math.abs(currentTime - prev) > Math.max(1.5, playbackRate * 1.5)
+    if (seeked) {
+      stopAllAudio()
+      lastStartedKeyRef.current = -1
+    }
+
+    const seg = segments.find(
       (s) => currentTime >= s.start && currentTime < s.start + s.duration,
     )
-    if (idx === -1) return
+    if (!seg || !seg.blobUrl) return
 
     // Same segment already started for this playback pass; do not restart it.
-    if (idx === lastStartedIdxRef.current) return
-
-    const seg = segments[idx]
-    if (!seg.blobUrl) return
+    if (seg.start === lastStartedKeyRef.current) return
 
     const audio = new Audio(seg.blobUrl)
     const audioSeconds = seg.audioMs > 0 ? seg.audioMs / 1000 : 0
@@ -231,14 +262,25 @@ export function useDubAudio(
         ? Math.min(1.35, Math.max(1, audioSeconds / targetSeconds))
         : 1
 
-    audio.volume = Math.max(0, Math.min(1, volume / 100))
-    audio.playbackRate = playbackRate * fitRate
-    audio.onended = () => {
-      activeAudiosRef.current.delete(idx)
+    // Landing mid-segment (seek or late-arriving audio): start the audio at the
+    // matching position instead of the segment's beginning. Audio media time
+    // advances fitRate× faster than video time, hence the scaling. Clamp to the
+    // audio's actual length so we never seek past the end (which throws).
+    const offset = currentTime - seg.start
+    if (offset > 0.3 && audioSeconds > 0) {
+      audio.currentTime = Math.min(offset * fitRate, Math.max(0, audioSeconds - 0.05))
     }
 
-    activeAudiosRef.current.set(idx, audio)
-    lastStartedIdxRef.current = idx
+    audio.volume = Math.max(0, Math.min(1, volume / 100))
+    audio.playbackRate = playbackRate * fitRate
+    fitRatesRef.current.set(audio, fitRate)
+    const key = seg.start
+    audio.onended = () => {
+      if (activeAudiosRef.current.get(key) === audio) activeAudiosRef.current.delete(key)
+    }
+
+    activeAudiosRef.current.set(key, audio)
+    lastStartedKeyRef.current = key
     pruneOverlappingAudio()
     audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e))
   }, [currentTime, segments, enabled, playing, playbackRate, volume, pruneOverlappingAudio, stopAllAudio])

@@ -31,7 +31,7 @@ import { useYouTubePlayer } from "@/_comps/dashboard/useYouTubePlayer";
 import { useProcessedVideo } from "@/_comps/dashboard/useProcessedVideo";
 import { useTranslatedSubtitles } from "@/_comps/dashboard/useTranslatedSubtitles";
 import { useDubAudio } from "@/_comps/dashboard/useDubAudio";
-import { DEFAULT_VOICE_ID } from "@/_comps/dashboard/voices";
+import { DEFAULT_VOICE_ID, VOICES } from "@/_comps/dashboard/voices";
 import type { ProcessStage } from "@/_comps/dashboard/VideoPane";
 import type { YouTubeSearchResult } from "@/lib/youtube-search";
 import type { Segment } from "@/lib/backend-api";
@@ -91,6 +91,15 @@ interface VideoProcessContextType {
   toggleDub: () => void;
   voiceGender: VoiceGender;
   toggleGender: () => void;
+  setVoiceGender: (g: VoiceGender) => void;
+  selectedVoiceId: string;
+  selectVoiceById: (voiceId: string) => void;
+  dubVolume: number;
+  setDubVolume: (v: number) => void;
+  dubSpeed: number;
+  setDubSpeed: (v: number) => void;
+  ytVolume: number;
+  setYtVolume: (v: number) => void;
   dub: ReturnType<typeof useDubAudio>;
 }
 
@@ -105,6 +114,20 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   );
   const [dubMode, setDubMode] = useState<DubMode>("original");
   const [voiceGender, setVoiceGender] = useState<VoiceGender>("male");
+  const [dubVolume, setDubVolume] = useState<number>(100);
+  const [dubSpeed, setDubSpeed] = useState<number>(1.0);
+  const [ytVolume, setYtVolume] = useState<number>(20);
+
+  // Voice ID is derived from gender — one voice per gender in the VOICES table.
+  const selectedVoiceId = useMemo(
+    () => VOICES.find((v) => v.gender === voiceGender)?.id ?? DEFAULT_VOICE_ID,
+    [voiceGender],
+  );
+
+  const selectVoiceById = useCallback((voiceId: string) => {
+    const voice = VOICES.find((v) => v.id === voiceId);
+    if (voice) setVoiceGender(voice.gender);
+  }, []);
 
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -138,13 +161,16 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     dubMode !== "mongolian",
   );
 
+  // Dub audio: video's playback rate multiplied by the user's dub-speed pref, so
+  // slowing the YouTube player also slows the dub proportionally.
   const dub = useDubAudio(
     videoId,
     player.time,
     player.playing,
     dubMode === "mongolian",
-    DEFAULT_VOICE_ID,
-    player.playbackRate,
+    selectedVoiceId,
+    player.playbackRate * dubSpeed,
+    dubVolume,
   );
 
   // Which segments the subtitle layer should show: the dub's translated text
@@ -331,6 +357,15 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     toggleDub,
     voiceGender,
     toggleGender,
+    setVoiceGender,
+    selectedVoiceId,
+    selectVoiceById,
+    dubVolume,
+    setDubVolume,
+    dubSpeed,
+    setDubSpeed,
+    ytVolume,
+    setYtVolume,
     dub,
   };
 

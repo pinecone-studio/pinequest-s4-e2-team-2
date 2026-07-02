@@ -10,6 +10,7 @@ import { ArrowLeft } from "lucide-react";
 import { useVideoProcess } from "@/_comps/providers/VideoProcessProvider";
 import { VideoPane } from "@/_comps/dashboard/VideoPane";
 import { SubtitlePane } from "@/_comps/dashboard/SubtitlePane";
+import { VOICES } from "@/_comps/dashboard/voices";
 import { YTsidebar } from "@/_comps/ui/YTsidebar";
 import { AmbientBackground } from "./AmbientBackground";
 
@@ -23,18 +24,26 @@ export default function UserDashboard() {
     processProgress,
     dubMode,
     toggleDub,
-    voiceGender,
-    toggleGender,
+    selectedVoiceId,
+    selectVoiceById,
+    dubVolume,
+    setDubVolume,
+    dubSpeed,
+    setDubSpeed,
+    ytVolume,
+    setYtVolume,
     dub,
     cancel,
   } = useVideoProcess();
 
-  // Duck the original YouTube audio while the Mongolian dub is playing.
+  // Duck the original YouTube audio while the Mongolian dub is playing. The
+  // user-controlled `ytVolume` slider only applies during Mongolian mode; in
+  // original mode we always restore full volume.
   useEffect(() => {
     if (!player.ready) return;
     player.unMute();
-    player.setVolume(dubMode === "mongolian" ? 12 : 100);
-  }, [dubMode, player.ready, videoId, player.unMute, player.setVolume]);
+    player.setVolume(dubMode === "mongolian" ? ytVolume : 100);
+  }, [dubMode, ytVolume, player.ready, videoId, player.unMute, player.setVolume]);
 
   const subLoading =
     processStage === "fetching" || processStage === "translating";
@@ -77,6 +86,15 @@ export default function UserDashboard() {
             dubProgress={dub.progress}
             dubError={dub.error}
             onToggleDub={toggleDub}
+            voices={VOICES}
+            selectedVoiceId={selectedVoiceId}
+            onSelectVoice={selectVoiceById}
+            dubVolume={dubVolume}
+            ytVolume={ytVolume}
+            onDubVolumeChange={setDubVolume}
+            onYtVolumeChange={setYtVolume}
+            dubSpeed={dubSpeed}
+            onDubSpeedChange={setDubSpeed}
             processStage={processStage}
             processProgress={processProgress}
           />
